@@ -40,8 +40,8 @@ npm-debug.log*
 *.pem
 
 # OMC
-.omc/state/
-.omc/logs/
+.omc/
+daemon/.omc/
 
 # Package
 *.tgz
