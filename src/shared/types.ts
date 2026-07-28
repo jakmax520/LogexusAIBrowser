@@ -7,7 +7,16 @@ export type ToolAction =
   | 'type'
   | 'navigate'
   | 'extract'
-  | 'scroll';
+  | 'scroll'
+  | 'screenshot'
+  | 'evaluate'
+  | 'network_start'
+  | 'network_stop'
+  | 'console_start'
+  | 'console_stop'
+  | 'perf_start'
+  | 'perf_stop'
+  | 'cdp_detach';
 
 // ── 交互元素 (页面降噪后) ──
 export interface InteractiveElement {

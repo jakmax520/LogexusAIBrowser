@@ -92,7 +92,96 @@ cd dist && zip -r ../logexus-ai-browser-v0.1.0.zip * && cd ..
 4. Side Panel 弹出授权确认 → 点击「允许」→ Agent 操作执行
 5. 审计日志实时滚动显示每步操作
 
-### 3.4 调试方法
+### 3.4 端到端测试（模拟外部 Agent 调用）
+
+**方式一：使用 Test Console 页面**
+
+1. 构建扩展并加载到 Chrome
+2. 在 `chrome://extensions/` 找到 Logexus AI Browser，**复制扩展 ID**（32 位字符串）
+3. 打开任意网页（如 `https://www.bing.com`）
+4. 新开一个 Tab，打开 `dist/test-agent.html`
+5. 在页面中输入扩展 ID，点击 **「连接」**
+6. 点击操作按钮（observe / click / type ...）发送 AGENT_REQUEST
+7. 页面底部日志区实时显示 AGENT_RESPONSE 结果
+
+**方式二：浏览器 Console 粘贴脚本**
+
+1. 获取扩展 ID
+2. 打开目标网页，按 F12 → Console
+3. 将 `scripts/test-agent.ts` 中的 `CONSOLE_SCRIPT` 内容替换 `YOUR_EXTENSION_ID_HERE`
+4. 粘贴到 Console 执行
+
+**方式三：外部 Node.js 脚本（通过 CDP）**
+
+```typescript
+// 使用 chrome.debugger API 或 Puppeteer 连接已有 Chrome 实例
+// 通过 CDP Runtime.evaluate 调用 chrome.runtime.sendMessage
+```
+
+### 3.5 配置 Native Messaging（外部 Agent 接入）
+
+Native Messaging 允许外部程序（Node.js/Python/任何语言）通过标准 stdin/stdout 与 Chrome 扩展通信。
+
+#### Windows
+
+1. 在 `chrome://extensions` 找到 Logexus AI Browser，复制扩展 ID
+2. 以管理员身份运行注册脚本：
+
+```bat
+cd native-host
+install.bat <你的扩展ID>
+```
+
+3. 重启 Chrome
+
+脚本会自动完成：
+- 生成 `host.bat`（启动 Node.js Host）
+- 生成 `com.logexus.browser.host.json`（Host 清单）
+- 写入注册表 `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.logexus.browser.host`
+
+#### macOS
+
+```bash
+# 创建 host 清单
+CHROME_NATIVE_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
+mkdir -p "$CHROME_NATIVE_DIR"
+
+cat > "$CHROME_NATIVE_DIR/com.logexus.browser.host.json" << EOF
+{
+  "name": "com.logexus.browser.host",
+  "description": "Logexus AI Browser Native Host",
+  "path": "$PWD/native-host/host.js",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://<EXTENSION_ID>/"]
+}
+EOF
+```
+
+#### 验证
+
+Native Messaging 连接成功后，Service Worker Console 输出 `[SW] Native Messaging connected`。
+
+### 3.6 配置 MCP Server（Claude Code 接入）
+
+```bash
+# 安装依赖
+cd mcp-wrapper && npm install
+
+# 配置 Claude Code MCP
+# 编辑 ~/.claude/claude_desktop_config.json：
+{
+  "mcpServers": {
+    "logexus": {
+      "command": "node",
+      "args": ["D:/CCWorkSpace/LogexusAIBrowser/mcp-wrapper/server.js"]
+    }
+  }
+}
+```
+
+配置后 Claude Code 即可直接调用 7 种浏览器工具：`observe`, `click`, `type`, `navigate`, `extract`, `scroll`, `screenshot`。
+
+### 3.7 调试方法
 
 - **Service Worker 调试**：`chrome://extensions/` → 找到扩展 → 点击 "Service Worker" 链接 → 打开 DevTools
 - **Content Script 调试**：在目标网页按 F12 → Console → 筛选当前扩展的日志

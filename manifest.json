@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Logexus AI Browser",
-  "version": "0.1.0",
-  "description": "AI-driven browser operator — let AI control your browser like a human.",
+  "version": "0.1.5",
+  "description": "AI-powered browser operator. Expose your Chrome as a secure automation engine for Claude Code, Cursor, and custom AI Agents via local WebSocket API.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -12,7 +12,9 @@
     "activeTab",
     "tabs",
     "scripting",
-    "storage"
+    "storage",
+    "debugger",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -24,11 +26,15 @@
   "side_panel": {
     "default_path": "src/sidepanel/index.html"
   },
+  "externally_connectable": {
+    "matches": ["<all_urls>"]
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
       "js": ["src/content/index.ts"],
-      "run_at": "document_idle"
+      "run_at": "document_start",
+      "all_frames": true
     }
   ]
 }

@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Logexus Agent Test Console</title>
+  <style>
+    :root { --bg:#1E1E1E; --panel:#252525; --card:#2D2D2D; --border:#374151; --text:#F3F4F6; --muted:#9CA3AF; --green:#22C55E; --red:#EF4444; --amber:#F59E0B; --primary:#6366F1; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:Inter,system-ui,sans-serif; background:var(--bg); color:var(--text); padding:20px; max-width:900px; margin:0 auto; }
+    h1 { font-size:18px; margin-bottom:4px; }
+    .sub { color:var(--muted); font-size:12px; margin-bottom:16px; }
+    .row { display:flex; gap:8px; margin-bottom:12px; align-items:center; }
+    label { font-size:12px; color:var(--muted); white-space:nowrap; }
+    input, select, textarea { background:var(--card); border:1px solid var(--border); color:var(--text); padding:6px 10px; border-radius:6px; font-size:13px; font-family:monospace; width:100%; }
+    textarea { resize:vertical; min-height:50px; }
+    button { padding:6px 16px; border-radius:6px; border:none; cursor:pointer; font-size:13px; font-weight:500; }
+    .btn-send { background:var(--primary); color:#fff; }
+    .btn-send:disabled { opacity:0.4; cursor:not-allowed; }
+    .btn-preset { background:var(--card); color:var(--text); border:1px solid var(--border); font-size:11px; padding:4px 10px; }
+    .btn-preset:hover { border-color:var(--primary); }
+    #log { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:12px; min-height:200px; max-height:500px; overflow-y:auto; font-family:JetBrains Mono,monospace; font-size:12px; }
+    .log-entry { padding:4px 0; border-bottom:1px solid var(--border); }
+    .log-send { color:var(--primary); }
+    .log-recv { color:var(--green); }
+    .log-err { color:var(--red); }
+    .badge { display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:500; }
+    .badge-ok { background:#166534; color:var(--green); }
+    .badge-err { background:#7F1D1D; color:var(--red); }
+    .badge-blocked { background:#78350F; color:var(--amber); }
+    .status { font-size:12px; padding:4px 8px; border-radius:4px; }
+    .connected { background:#166534; color:var(--green); }
+    .disconnected { background:#374151; color:var(--muted); }
+  </style>
+</head>
+<body>
+
+<h1>Logexus AI Browser — Test Console</h1>
+<p class="sub">模拟外部 AI Agent，向扩展发送 AGENT_REQUEST 并查看 AGENT_RESPONSE</p>
+
+<div class="row">
+  <label>扩展 ID:</label>
+  <input id="extId" placeholder="chrome://extensions 中查看" style="max-width:260px;" />
+  <button onclick="checkConnection()">连接</button>
+  <span id="connStatus" class="status disconnected">未连接</span>
+</div>
+
+<div class="row" style="flex-wrap:wrap;">
+  <button class="btn-preset" onclick="sendPreset('observe')">observe</button>
+  <button class="btn-preset" onclick="sendPreset('click')">click</button>
+  <button class="btn-preset" onclick="sendPreset('type')">type</button>
+  <button class="btn-preset" onclick="sendPreset('navigate')">navigate</button>
+  <button class="btn-preset" onclick="sendPreset('extract')">extract</button>
+  <button class="btn-preset" onclick="sendPreset('scroll')">scroll</button>
+  <button class="btn-preset" onclick="sendPreset('screenshot')">screenshot</button>
+  <button class="btn-preset" onclick="sendNewTab()">navigate newtab</button>
+</div>
+
+<div class="row">
+  <label>Task ID:</label>
+  <input id="taskId" value="test_001" style="max-width:120px;" />
+  <label>Action:</label>
+  <select id="action" style="max-width:120px;">
+    <option value="observe">observe</option>
+    <option value="click">click</option>
+    <option value="type">type</option>
+    <option value="navigate">navigate</option>
+    <option value="extract">extract</option>
+    <option value="scroll">scroll</option>
+    <option value="screenshot">screenshot</option>
+    <option value="evaluate">evaluate (CDP)</option>
+    <option value="network_start">network_start (CDP)</option>
+    <option value="network_stop">network_stop (CDP)</option>
+    <option value="console_start">console_start (CDP)</option>
+    <option value="console_stop">console_stop (CDP)</option>
+    <option value="perf_start">perf_start (CDP)</option>
+    <option value="perf_stop">perf_stop (CDP)</option>
+  </select>
+  <label>Target ID:</label>
+  <input id="targetId" placeholder="el_0" style="max-width:80px;" />
+  <label>Value:</label>
+  <input id="value" placeholder="text / url / selector" style="max-width:160px;" />
+</div>
+
+<div class="row">
+  <label>Reasoning:</label>
+  <input id="reasoning" placeholder="AI Agent 思考过程..." />
+</div>
+
+<div class="row">
+  <button id="sendBtn" class="btn-send" onclick="sendRequest()">发送 AGENT_REQUEST</button>
+  <button onclick="clearLog()" style="background:var(--card);color:var(--muted);">清空日志</button>
+</div>
+
+<div id="log"></div>
+
+<script>
+  const EXT_KEY = 'logexus_ext_id';
+  const idInput = document.getElementById('extId');
+  const connEl = document.getElementById('connStatus');
+
+  // 恢复上次扩展 ID
+  const saved = localStorage.getItem(EXT_KEY);
+  if (saved) idInput.value = saved;
+
+  function log(msg, cls) {
+    const el = document.getElementById('log');
+    const div = document.createElement('div');
+    div.className = 'log-entry ' + (cls || '');
+    div.textContent = new Date().toLocaleTimeString() + ' ' + msg;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function setConnected(ok) {
+    connEl.textContent = ok ? '已连接' : '未连接';
+    connEl.className = 'status ' + (ok ? 'connected' : 'disconnected');
+  }
+
+  async function checkConnection() {
+    const extId = idInput.value.trim();
+    if (!extId) { log('请输入扩展 ID', 'log-err'); return; }
+    localStorage.setItem(EXT_KEY, extId);
+    try {
+      const res = await chrome.runtime.sendMessage(extId, {
+        type: 'AGENT_REQUEST', task_id: 'ping', action: 'observe', payload: {}
+      });
+      log('连接成功! status=' + res.status, 'log-recv');
+      setConnected(true);
+    } catch (e) {
+      log('连接失败: ' + e.message, 'log-err');
+      setConnected(false);
+    }
+  }
+
+  function sendNewTab() {
+    const url = prompt('输入 URL:', 'https://www.google.com');
+    if (url) {
+      document.getElementById('action').value = 'navigate';
+      document.getElementById('value').value = 'newtab: ' + url;
+      document.getElementById('taskId').value = 'test_' + Date.now();
+      sendRequest();
+    }
+  }
+
+  function sendPreset(action) {
+    document.getElementById('action').value = action;
+    document.getElementById('taskId').value = 'test_' + Date.now();
+    sendRequest();
+  }
+
+  async function sendRequest() {
+    const extId = idInput.value.trim();
+    if (!extId) { log('请先输入扩展 ID 并点击连接', 'log-err'); return; }
+
+    const req = {
+      type: 'AGENT_REQUEST',
+      task_id: document.getElementById('taskId').value || 'test_' + Date.now(),
+      action: document.getElementById('action').value,
+      payload: {
+        target_id: document.getElementById('targetId').value || undefined,
+        value: document.getElementById('value').value || undefined,
+        reasoning: document.getElementById('reasoning').value || undefined
+      }
+    };
+
+    log('>>> ' + JSON.stringify(req), 'log-send');
+    document.getElementById('sendBtn').disabled = true;
+
+    try {
+      const res = await chrome.runtime.sendMessage(extId, req);
+      log('<<< status=' + res.status + ' | ' + (res.data?.action_result||''), 'log-recv');
+      if (res.data?.screenshot) {
+        log('  [截图] ' + (res.data.screenshot.length / 1024).toFixed(0) + 'KB base64', 'log-recv');
+      }
+      if (res.data?.new_observation) {
+        log('  互动元素: ' + res.data.new_observation.length + ' 个', 'log-recv');
+        res.data.new_observation.slice(0, 10).forEach(el => {
+          log('    [' + el.id + '] <' + el.tag + '> "' + (el.text||'').slice(0,40) + '"', 'log-recv');
+        });
+      }
+      setConnected(true);
+    } catch (e) {
+      log('Error: ' + e.message, 'log-err');
+      setConnected(false);
+    }
+
+    document.getElementById('sendBtn').disabled = false;
+  }
+
+  function clearLog() {
+    document.getElementById('log').innerHTML = '';
+  }
+</script>
+</body>
+</html>

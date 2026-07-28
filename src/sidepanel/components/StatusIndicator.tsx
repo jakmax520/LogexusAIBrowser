@@ -3,18 +3,20 @@
 interface Props {
   connected: boolean;
   tabId?: number;
+  tabCount?: number;
   url?: string;
   authGranted: boolean;
 }
 
-export function StatusIndicator({ connected, tabId, url, authGranted }: Props) {
+export function StatusIndicator({ connected, tabId, tabCount, url, authGranted }: Props) {
+  const tabInfo = tabCount && tabCount > 1
+    ? `${tabCount} tabs (active #${tabId})`
+    : connected ? `Tab #${tabId}` : '未连接';
+
   return (
     <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-[#252525] border-b border-gray-200 dark:border-gray-700">
-      {/* 连接状态 */}
       <span className={`status-dot ${connected ? 'bg-green-500' : 'bg-red-500'}`} />
-      <span className="text-xs text-gray-500 dark:text-gray-400">
-        {connected ? `Tab #${tabId}` : '未连接'}
-      </span>
+      <span className="text-xs text-gray-500 dark:text-gray-400">{tabInfo}</span>
 
       {connected && url && (
         <span className="text-xs text-gray-400 truncate flex-1" title={url}>
@@ -22,7 +24,6 @@ export function StatusIndicator({ connected, tabId, url, authGranted }: Props) {
         </span>
       )}
 
-      {/* 授权状态 */}
       <span className={`text-xs px-2 py-0.5 rounded-full ${
         authGranted
           ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
