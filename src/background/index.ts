@@ -48,6 +48,7 @@ const uiPorts = new Set<chrome.runtime.Port>();
 let auditIdCounter = 0;
 let authRequired = false; // TODO: 上线前改回 true
 let sessionAuthorized = false;
+const logexusGroupIds = new Map<number, number>(); // windowId → groupId
 
 // ── sendMessage 工具函数 ──
 function sendToTab(tabId: number, msg: Record<string, unknown>): Promise<Record<string, unknown> | null> {
@@ -378,6 +379,37 @@ function ensureAuthorized(_action: string): void {
 }
 
 // ═══════════════════════════════════════════
+// Tab Group — My Logexus Browser 分组
+// ═══════════════════════════════════════════
+
+async function getOrCreateLogexusGroup(tabId: number): Promise<number> {
+  const tab = await chrome.tabs.get(tabId);
+  const windowId = tab.windowId;
+
+  // 复用当前窗口已有分组
+  const existingId = logexusGroupIds.get(windowId);
+  if (existingId !== undefined) {
+    try {
+      await chrome.tabGroups.get(existingId); // 验证分组仍存在
+      await chrome.tabs.group({ tabIds: [tabId], groupId: existingId });
+      return existingId;
+    } catch {
+      logexusGroupIds.delete(windowId);
+    }
+  }
+
+  // 新建分组
+  const groupId = await chrome.tabs.group({ tabIds: [tabId] });
+  await chrome.tabGroups.update(groupId, {
+    title: 'My Logexus Browser',
+    color: 'purple',
+    collapsed: false,
+  });
+  logexusGroupIds.set(windowId, groupId);
+  return groupId;
+}
+
+// ═══════════════════════════════════════════
 // SW 级导航 — chrome.tabs.update 直接导航 + 等待加载 + CS 就绪
 // ═══════════════════════════════════════════
 
@@ -394,6 +426,9 @@ async function handleBrowserNavigate(params: BrowserNavigateParams): Promise<unk
   currentTabId = tabId;
   connectedTabs.delete(tabId);
   sessionAuthorized = false;
+
+  // 归入 My Logexus Browser 分组
+  getOrCreateLogexusGroup(tabId).catch(() => {});
 
   // 等待页面加载完成
   await waitForPageLoad(tabId);
