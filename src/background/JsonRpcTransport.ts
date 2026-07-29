@@ -159,8 +159,8 @@ export class JsonRpcTransport {
         this.scheduleReconnect();
       };
 
-      this.ws.onerror = (err) => {
-        console.error('[SW] JSON-RPC transport error:', err);
+      this.ws.onerror = () => {
+        console.warn('[SW] JSON-RPC transport: daemon unreachable, will retry...');
       };
     } catch {
       this.scheduleReconnect();
