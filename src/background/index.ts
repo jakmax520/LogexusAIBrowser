@@ -445,6 +445,11 @@ function emitAudit(req: AgentRequest, status: 'success' | 'error' | 'blocked', r
 // ── JSON-RPC 传输层 ──
 const transport = new JsonRpcTransport();
 
+// 旧协议 AgentRequest → 直达 handleAgentRequest（避免 JSON-RPC method 映射丢失 navigate/extract 等 action）
+transport.setAgentRequestHandler((req) =>
+  handleAgentRequest(req as unknown as AgentRequest).then(r => r as unknown as Record<string, unknown>)
+);
+
 // 遗留命令：Macro 录制回放 + ping/pong
 transport.setLegacyCommandHandler((msg) => {
   const type = msg.type as string;

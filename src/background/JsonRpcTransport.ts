@@ -39,6 +39,9 @@ export type RequestHandler = (
   params: Record<string, unknown>
 ) => Promise<unknown>;
 
+// ── 旧协议 AgentRequest 处理器 ──
+export type AgentRequestHandler = (req: Record<string, unknown>) => Promise<Record<string, unknown>>;
+
 // ── 遗留命令处理器（非 JSON-RPC 的旧协议消息）──
 export type LegacyCommandHandler = (msg: Record<string, unknown>) => boolean; // 返回 true 表示已处理
 
@@ -53,6 +56,7 @@ export class JsonRpcTransport {
   private ws: WebSocket | null = null;
   private handler: RequestHandler | null = null;
   private legacyHandler: LegacyCommandHandler | null = null;
+  private agentReqHandler: AgentRequestHandler | null = null;
   private keepAliveTimer: ReturnType<typeof setInterval> | null = null;
   private backoff = 0;
   private sessionId: string;
@@ -71,6 +75,11 @@ export class JsonRpcTransport {
   /** 注册 JSON-RPC 请求处理器 */
   onRequest(handler: RequestHandler): void {
     this.handler = handler;
+  }
+
+  /** 注册旧协议 AgentRequest 处理器（绕过 JSON-RPC 映射，直达 handleAgentRequest）*/
+  setAgentRequestHandler(handler: AgentRequestHandler): void {
+    this.agentReqHandler = handler;
   }
 
   /** 注册遗留命令处理器（非 JSON-RPC 消息，如 Macro 命令、ping 等）*/
@@ -259,53 +268,23 @@ export class JsonRpcTransport {
       // 优先交给遗留命令处理器（Macro、ping 等）
       if (this.legacyHandler?.(obj)) return;
 
-      // 将旧协议 AGENT_REQUEST 包装为 JSON-RPC 请求交给 handler
-      if (obj.type === 'AGENT_REQUEST' && this.handler) {
-        const action = obj.action as string;
-        const payload = (obj.payload || {}) as Record<string, unknown>;
-        const taskId = obj.task_id as string;
-
-        // 映射旧 action → JSON-RPC method
-        const methodMap: Record<string, string> = {
-          observe: 'browser.get_context',
-          click: 'action.click',
-          type: 'action.input',
-          scroll: 'action.scroll',
-          screenshot: 'browser.get_context',
-        };
-        const method = methodMap[action] || action;
-
-        // 映射参数
-        const params: Record<string, unknown> = {};
-        if (payload.target_id) params.elementId = payload.target_id;
-        if (payload.value) params.text = payload.value;
-
-        this.handler(method, params)
-          .then((result) => {
-            // 包装回旧协议格式
-            const response = {
-              type: 'AGENT_RESPONSE',
-              task_id: taskId,
-              status: 'success',
-              data: {
-                action_result: `${action} succeeded`,
-                current_url: (result as Record<string, unknown>)?.url,
-                new_observation: (result as Record<string, unknown>)?.elements,
-                screenshot: (result as Record<string, unknown>)?.screenshot,
-              },
-            };
+      // 将旧协议 AGENT_REQUEST 交给 agentReqHandler（直达 handleAgentRequest）
+      if (obj.type === 'AGENT_REQUEST' && this.agentReqHandler) {
+        this.agentReqHandler(obj)
+          .then((response) => {
             this.ws?.send(JSON.stringify(response));
           })
           .catch((err) => {
             this.ws?.send(
               JSON.stringify({
                 type: 'AGENT_RESPONSE',
-                task_id: taskId,
+                task_id: obj.task_id as string,
                 status: 'error',
                 data: { error: err instanceof Error ? err.message : String(err) },
               })
             );
           });
+        return;
       }
     } catch {
       // 无法解析，忽略
