@@ -13,6 +13,8 @@ import {
 } from '../shared/messages';
 import {
   METHOD_BROWSER_GET_CONTEXT,
+  METHOD_BROWSER_NAVIGATE,
+  METHOD_BROWSER_RELOAD,
   METHOD_ACTION_CLICK,
   METHOD_ACTION_INPUT,
   METHOD_ACTION_SCROLL,
@@ -20,6 +22,7 @@ import {
 } from '../shared/jsonrpc';
 import type {
   BrowserGetContextParams,
+  BrowserNavigateParams,
   ActionClickParams,
   ActionInputParams,
   ActionScrollParams,
@@ -374,6 +377,87 @@ function ensureAuthorized(_action: string): void {
   }
 }
 
+// ═══════════════════════════════════════════
+// SW 级导航 — chrome.tabs.update 直接导航 + 等待加载 + CS 就绪
+// ═══════════════════════════════════════════
+
+async function handleBrowserNavigate(params: BrowserNavigateParams): Promise<unknown> {
+  let tabId = currentTabId;
+
+  if (params.newTab || !tabId) {
+    const tab = await chrome.tabs.create({ url: params.url, active: true });
+    tabId = tab.id!;
+  } else {
+    await chrome.tabs.update(tabId, { url: params.url });
+  }
+
+  currentTabId = tabId;
+  connectedTabs.delete(tabId);
+  sessionAuthorized = false;
+
+  // 等待页面加载完成
+  await waitForPageLoad(tabId);
+
+  // 等待 CS 注入并就绪
+  let csReady = false;
+  for (let i = 0; i < 20; i++) {
+    const resp = await sendToTab(tabId, { type: MSG_PING });
+    if (resp?.type === MSG_PONG) {
+      connectedTabs.add(tabId);
+      csReady = true;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  if (!csReady) {
+    throw Object.assign(new Error('Content Script not ready after navigation'), { code: RPC_ERROR_CODES.CONTENT_SCRIPT_UNREACHABLE });
+  }
+
+  // 导航成功后自动采集页面上下文
+  const obs = await sendToTab(tabId, { type: MSG_OBSERVE });
+  return {
+    url: obs?.url ?? params.url,
+    title: obs?.title ?? '',
+    elements: obs?.elements ?? [],
+  };
+}
+
+async function handleBrowserReload(): Promise<unknown> {
+  const tabId = currentTabId;
+  if (!tabId) {
+    throw Object.assign(new Error('No active tab'), { code: RPC_ERROR_CODES.NO_ACTIVE_TAB });
+  }
+
+  await chrome.tabs.reload(tabId);
+  connectedTabs.delete(tabId);
+  sessionAuthorized = false;
+
+  await waitForPageLoad(tabId);
+
+  let csReady = false;
+  for (let i = 0; i < 20; i++) {
+    const resp = await sendToTab(tabId, { type: MSG_PING });
+    if (resp?.type === MSG_PONG) {
+      connectedTabs.add(tabId);
+      csReady = true;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  if (!csReady) {
+    throw Object.assign(new Error('Content Script not ready after reload'), { code: RPC_ERROR_CODES.CONTENT_SCRIPT_UNREACHABLE });
+  }
+
+  const obs = await sendToTab(tabId, { type: MSG_OBSERVE });
+  return {
+    url: obs?.url ?? '',
+    title: obs?.title ?? '',
+    elements: obs?.elements ?? [],
+  };
+}
+
 // ── 等待页面加载完成 ──
 function waitForPageLoad(tabId: number): Promise<void> {
   return new Promise((resolve) => {
@@ -543,6 +627,13 @@ transport.onRequest(async (method, params) => {
     case METHOD_BROWSER_GET_CONTEXT: {
       const p = params as unknown as BrowserGetContextParams;
       return handleBrowserGetContext(p);
+    }
+    case METHOD_BROWSER_NAVIGATE: {
+      const p = params as unknown as BrowserNavigateParams;
+      return handleBrowserNavigate(p);
+    }
+    case METHOD_BROWSER_RELOAD: {
+      return handleBrowserReload();
     }
     case METHOD_ACTION_CLICK: {
       const p = params as unknown as ActionClickParams;

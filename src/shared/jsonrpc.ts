@@ -39,6 +39,8 @@ export type JsonRpcMessage = JsonRpcRequest | JsonRpcSuccess | JsonRpcError;
 // ═══════════════════════════════════════════
 
 export const METHOD_BROWSER_GET_CONTEXT = 'browser.get_context';
+export const METHOD_BROWSER_NAVIGATE = 'browser.navigate';
+export const METHOD_BROWSER_RELOAD = 'browser.reload';
 export const METHOD_ACTION_CLICK = 'action.click';
 export const METHOD_ACTION_INPUT = 'action.input';
 export const METHOD_ACTION_SCROLL = 'action.scroll';
@@ -65,6 +67,11 @@ export interface ActionInputParams {
 export interface ActionScrollParams {
   direction: 'up' | 'down';
   distance?: number;
+}
+
+export interface BrowserNavigateParams {
+  url: string;
+  newTab?: boolean;
 }
 
 export interface SystemRegisterParams {
