@@ -331,6 +331,28 @@ chrome.tabs.onUpdated.addListener(async (tabId, info) => {
   }
 });
 
+// ── SW 保活：每 15 秒 alarm 防止 Chrome 休眠 SW ──
+chrome.alarms.create('keepalive', { periodInMinutes: 0.25 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'keepalive') {
+    // 轻量心跳：检查 daemon 连接 + CS 存活
+    if (!daemonWs || daemonWs.readyState !== WebSocket.OPEN) connectDaemon();
+  }
+});
+
+// ── 扩展安装/更新时自动刷新所有 Tab 以加载最新 CS ──
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === 'update') {
+    console.log('[SW] Extension updated, reloading open tabs to load latest CS...');
+    const tabs = await chrome.tabs.query({});
+    for (const tab of tabs) {
+      if (tab.id && tab.url?.startsWith('http')) {
+        try { chrome.tabs.reload(tab.id); } catch { /* ignore */ }
+      }
+    }
+  }
+});
+
 // ── 启动 ──
 console.log('[SW] Starting Logexus AI Browser v0.1.5...');
 connectDaemon();
