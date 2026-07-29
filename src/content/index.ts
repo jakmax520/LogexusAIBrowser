@@ -11,6 +11,9 @@ const MSG_OBSERVE = 'LOGEXUS:OBSERVE';
 const MSG_EXECUTE = 'LOGEXUS:EXECUTE';
 const MSG_PING = 'LOGEXUS:PING';
 const MSG_PONG = 'LOGEXUS:PONG';
+const MSG_LOGEXUS_MANAGED = 'LOGEXUS:MANAGED';
+
+let logexusManaged = false;
 
 // ── 验证码检测 ──
 const CAPTCHA_PATTERNS = [
@@ -26,8 +29,76 @@ function checkCaptcha(): boolean {
   return false;
 }
 
+// ── Logexus 管理标识 — 浮动徽章 ──
+function showLogexusBadge(): void {
+  if (logexusManaged) return;
+  logexusManaged = true;
+
+  const badge = document.createElement('div');
+  badge.id = 'logexus-badge';
+  badge.innerHTML = `
+    <style>
+      #logexus-badge {
+        all: initial;
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        z-index: 2147483647;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 14px;
+        background: rgba(0,0,0,0.82);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 20px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-size: 12px;
+        font-weight: 500;
+        color: #fff;
+        letter-spacing: 0.3px;
+        cursor: default;
+        user-select: none;
+        -webkit-user-select: none;
+        transition: opacity 0.3s;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+      }
+      #logexus-badge .lx-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #10b981;
+        box-shadow: 0 0 6px #10b981;
+        flex-shrink: 0;
+      }
+      #logexus-badge .lx-text {
+        white-space: nowrap;
+      }
+      #logexus-badge .lx-divider {
+        width: 1px;
+        height: 12px;
+        background: rgba(255,255,255,0.2);
+        flex-shrink: 0;
+      }
+      #logexus-badge:hover {
+        opacity: 0.7;
+      }
+    </style>
+    <span class="lx-dot"></span>
+    <span class="lx-text">My Logexus Browser</span>
+  `;
+  document.body.appendChild(badge);
+}
+
 // ── 消息处理（sendResponse 回调模式）──
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // Logexus 管理标识
+  if (msg.type === MSG_LOGEXUS_MANAGED) {
+    showLogexusBadge();
+    return false;
+  }
+
   // PING
   if (msg.type === MSG_PING) {
     if (checkCaptcha() && !captchaDetected) {

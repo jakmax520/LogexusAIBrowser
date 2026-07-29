@@ -414,8 +414,12 @@ async function handleBrowserNavigate(params: BrowserNavigateParams): Promise<unk
     throw Object.assign(new Error('Content Script not ready after navigation'), { code: RPC_ERROR_CODES.CONTENT_SCRIPT_UNREACHABLE });
   }
 
+  // 标识此 Tab 为 Logexus 管理
+  sendToTab(tabId, { type: 'LOGEXUS:MANAGED' });
+
   // 导航成功后自动采集页面上下文
   const obs = await sendToTab(tabId, { type: MSG_OBSERVE });
+  broadcast(MSG_CONNECTION_STATUS, { connected: true, tabCount: connectedTabs.size, currentTabId: tabId });
   return {
     url: obs?.url ?? params.url,
     title: obs?.title ?? '',
@@ -449,6 +453,9 @@ async function handleBrowserReload(): Promise<unknown> {
   if (!csReady) {
     throw Object.assign(new Error('Content Script not ready after reload'), { code: RPC_ERROR_CODES.CONTENT_SCRIPT_UNREACHABLE });
   }
+
+  // 标识此 Tab 为 Logexus 管理
+  sendToTab(tabId, { type: 'LOGEXUS:MANAGED' });
 
   const obs = await sendToTab(tabId, { type: MSG_OBSERVE });
   return {

@@ -9,6 +9,7 @@ export const MSG_OBSERVE = 'LOGEXUS:OBSERVE';
 export const MSG_EXECUTE = 'LOGEXUS:EXECUTE';
 export const MSG_PING = 'LOGEXUS:PING';
 export const MSG_PONG = 'LOGEXUS:PONG';
+export const MSG_LOGEXUS_MANAGED = 'LOGEXUS:MANAGED';
 
 // ── Content Script → SW ──
 export const MSG_OBSERVE_RESULT = 'LOGEXUS:OBSERVE_RESULT';
