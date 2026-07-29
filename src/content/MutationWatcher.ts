@@ -49,10 +49,13 @@ export function stopWatching(): void {
 /**
  * 立即触发一次回调（用于导航后等待页面稳定）
  */
+const MAX_WAIT_MS = 8000;
+
 export function waitForStable(): Promise<void> {
   return new Promise((resolve) => {
+    const started = Date.now();
     const check = () => {
-      if (document.readyState === 'complete' && isNetworkIdle()) {
+      if (document.readyState === 'complete' && (isNetworkIdle() || Date.now() - started > MAX_WAIT_MS)) {
         setTimeout(resolve, SILENCE_MS);
       } else {
         setTimeout(check, 200);
