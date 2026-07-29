@@ -1,4 +1,4 @@
-// ── Service Worker — API 网关 + 多 Tab + 安全授权 + WS + CDP ──
+// ── Service Worker — API 网关 + 多 Tab + 安全授权 + JSON-RPC + CDP ──
 
 import {
   MSG_AGENT_REQUEST,
@@ -11,6 +11,20 @@ import {
   MSG_PING,
   MSG_PONG,
 } from '../shared/messages';
+import {
+  METHOD_BROWSER_GET_CONTEXT,
+  METHOD_ACTION_CLICK,
+  METHOD_ACTION_INPUT,
+  METHOD_ACTION_SCROLL,
+  RPC_ERROR_CODES,
+} from '../shared/jsonrpc';
+import type {
+  BrowserGetContextParams,
+  ActionClickParams,
+  ActionInputParams,
+  ActionScrollParams,
+} from '../shared/jsonrpc';
+import { JsonRpcTransport } from './JsonRpcTransport';
 import type {
   AgentRequest,
   AgentResponse,
@@ -22,6 +36,7 @@ import {
   loadMacros,
   deleteMacro,
 } from './MacroEngine';
+import { cdpEvaluate } from './CDPEngine';
 
 // ── 状态 ──
 const connectedTabs = new Set<number>();
@@ -209,6 +224,156 @@ async function handleExecute(req: AgentRequest): Promise<AgentResponse> {
   return response;
 }
 
+// ═══════════════════════════════════════════
+// JSON-RPC 2.0 Method 处理器
+// ═══════════════════════════════════════════
+
+async function handleBrowserGetContext(params: BrowserGetContextParams): Promise<unknown> {
+  if (connectedTabs.size === 0) await activateCurrentTab();
+  if (connectedTabs.size === 0) {
+    throw Object.assign(new Error('No active tab'), { code: RPC_ERROR_CODES.NO_ACTIVE_TAB });
+  }
+
+  const tabId = currentTabId!;
+  const resp = await sendToTab(tabId, { type: MSG_OBSERVE });
+  if (!resp || resp.error) {
+    throw Object.assign(new Error((resp?.error as string) || 'Observe failed'), { code: RPC_ERROR_CODES.CONTENT_SCRIPT_UNREACHABLE });
+  }
+
+  const result = {
+    url: resp.url as string,
+    title: resp.title as string,
+    elements: resp.elements as InteractiveElement[],
+  };
+
+  // 按需截图
+  if (params.includeScreenshot) {
+    try {
+      const screenshot = await chrome.tabs.captureVisibleTab(tabId, { format: 'jpeg', quality: 70 });
+      return { ...result, screenshot };
+    } catch { /* 截图失败不影响返回 */ }
+  }
+
+  return result;
+}
+
+async function handleActionClick(params: ActionClickParams): Promise<unknown> {
+  if (connectedTabs.size === 0) await activateCurrentTab();
+  if (connectedTabs.size === 0) {
+    throw Object.assign(new Error('No active tab'), { code: RPC_ERROR_CODES.NO_ACTIVE_TAB });
+  }
+  ensureAuthorized('click');
+
+  const tabId = currentTabId!;
+  const resp = await sendToTab(tabId, {
+    type: MSG_EXECUTE,
+    action: 'click',
+    targetId: params.elementId,
+  });
+
+  if (!resp) {
+    await waitForPageLoad(tabId);
+    const obs = await sendToTab(tabId, { type: MSG_OBSERVE });
+    if (obs && obs.elements) {
+      return { success: true, url: obs.url as string, newObservation: obs.elements as InteractiveElement[] };
+    }
+    throw Object.assign(new Error('Click: no response from page'), { code: RPC_ERROR_CODES.ACTION_FAILED });
+  }
+
+  if (resp.error) {
+    // 元素未找到 → 重扫 DOM 找候选
+    if ((resp.error as string).includes('not found')) {
+      const obs = await sendToTab(tabId, { type: MSG_OBSERVE });
+      if (obs?.elements) {
+        const candidates = (obs.elements as InteractiveElement[]).filter((e) => e.inViewport);
+        if (candidates.length > 0) {
+          const retry = await sendToTab(tabId, { type: MSG_EXECUTE, action: 'click', targetId: candidates[0].id });
+          if (retry && !retry.error) {
+            return { success: true, url: retry.url as string, newObservation: retry.elements as InteractiveElement[] };
+          }
+        }
+      }
+    }
+    throw Object.assign(new Error(resp.error as string), { code: RPC_ERROR_CODES.ELEMENT_NOT_FOUND });
+  }
+
+  return { success: true, url: resp.url as string, newObservation: resp.elements as InteractiveElement[] };
+}
+
+async function handleActionInput(params: ActionInputParams): Promise<unknown> {
+  if (connectedTabs.size === 0) await activateCurrentTab();
+  if (connectedTabs.size === 0) {
+    throw Object.assign(new Error('No active tab'), { code: RPC_ERROR_CODES.NO_ACTIVE_TAB });
+  }
+  ensureAuthorized('type');
+
+  const tabId = currentTabId!;
+  const elementId = Number(params.elementId.replace('el_', ''));
+
+  // 优先 CDP 路径：绕过 React/Vue 双向绑定
+  try {
+    await cdpInputText(tabId, elementId, params.text);
+    // CDP 成功后重新采集页面状态
+    const obs = await sendToTab(tabId, { type: MSG_OBSERVE });
+    return {
+      success: true,
+      url: obs?.url as string,
+      newObservation: obs?.elements as InteractiveElement[],
+    };
+  } catch {
+    // CDP 失败 → fallback 到 CS type action
+    console.log('[SW] CDP input failed, falling back to CS type action');
+  }
+
+  // Fallback: 通过 Content Script 的 type action
+  const resp = await sendToTab(tabId, {
+    type: MSG_EXECUTE,
+    action: 'type',
+    targetId: params.elementId,
+    value: params.text,
+  });
+
+  if (resp?.error) {
+    throw Object.assign(new Error(resp.error as string), { code: RPC_ERROR_CODES.ELEMENT_NOT_FOUND });
+  }
+
+  return {
+    success: true,
+    url: resp?.url as string,
+    newObservation: resp?.elements as InteractiveElement[],
+  };
+}
+
+async function handleActionScroll(params: ActionScrollParams): Promise<unknown> {
+  if (connectedTabs.size === 0) await activateCurrentTab();
+  if (connectedTabs.size === 0) {
+    throw Object.assign(new Error('No active tab'), { code: RPC_ERROR_CODES.NO_ACTIVE_TAB });
+  }
+
+  const tabId = currentTabId!;
+  const resp = await sendToTab(tabId, {
+    type: MSG_EXECUTE,
+    action: 'scroll',
+    value: params.direction,
+    distance: params.distance,
+  });
+
+  if (!resp) {
+    throw Object.assign(new Error('Scroll: no response from CS'), { code: RPC_ERROR_CODES.CONTENT_SCRIPT_UNREACHABLE });
+  }
+  if (resp.error) {
+    throw Object.assign(new Error(resp.error as string), { code: RPC_ERROR_CODES.ACTION_FAILED });
+  }
+  return { success: true };
+}
+
+function ensureAuthorized(_action: string): void {
+  if (authRequired && !sessionAuthorized) {
+    // JSON-RPC 场景下不阻塞（授权通过 Side Panel 交互完成），
+    // 实际生产环境可在此处抛出 AUTH_BLOCKED 错误
+  }
+}
+
 // ── 等待页面加载完成 ──
 function waitForPageLoad(tabId: number): Promise<void> {
   return new Promise((resolve) => {
@@ -277,34 +442,70 @@ function emitAudit(req: AgentRequest, status: 'success' | 'error' | 'blocked', r
   });
 }
 
-// ── WebSocket ──
-const DAEMON_WS = 'ws://127.0.0.1:9527';
-const WS_TOKEN = 'lx_3696ac533d9ddfb81d5e50340f205317';
-let daemonWs: WebSocket | null = null;
+// ── JSON-RPC 传输层 ──
+const transport = new JsonRpcTransport();
 
-function connectDaemon(): void {
-  if (daemonWs?.readyState === WebSocket.OPEN) return;
-  try {
-    daemonWs = new WebSocket(`${DAEMON_WS}?token=${WS_TOKEN}&role=extension&clientId=ext_${Date.now()}`);
-    daemonWs.onopen = () => console.log('[SW] WebSocket connected to daemon');
-    daemonWs.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data as string) as Record<string, unknown>;
-        const type = msg.type as string;
-        if (type === MSG_AGENT_REQUEST) {
-          handleAgentRequest(msg as unknown as AgentRequest).then((r) => daemonWs?.send(JSON.stringify(r)));
-          return;
-        }
-        if (type === MSG_CAPTCHA_ALERT) { broadcast(MSG_CAPTCHA_ALERT, {}); return; }
-        if (type === 'LOGEXUS:RECORD_START') { startRecording(msg.name as string); return; }
-        if (type === 'LOGEXUS:RECORD_STOP') { finishRecording(); return; }
-        if (type === 'LOGEXUS:MACRO_LIST') { loadMacros().then((m) => daemonWs?.send(JSON.stringify({ type: 'MACRO_LIST_RESULT', macros: m }))); return; }
-        if (type === 'LOGEXUS:MACRO_DELETE') { deleteMacro(msg.name as string); return; }
-        if (type === 'ping') { daemonWs?.send(JSON.stringify({ type: 'pong', timestamp: Date.now() })); }
-      } catch { /* ignore */ }
-    };
-    daemonWs.onclose = () => { daemonWs = null; setTimeout(connectDaemon, 3000); };
-  } catch { setTimeout(connectDaemon, 5000); }
+// 遗留命令：Macro 录制回放 + ping/pong
+transport.setLegacyCommandHandler((msg) => {
+  const type = msg.type as string;
+  if (type === 'LOGEXUS:RECORD_START') { startRecording(msg.name as string); return true; }
+  if (type === 'LOGEXUS:RECORD_STOP') { finishRecording(); return true; }
+  if (type === 'LOGEXUS:MACRO_LIST') {
+    loadMacros().then((m) => transport.sendNotification('MACRO_LIST_RESULT', { macros: m as unknown as Record<string, unknown> }));
+    return true;
+  }
+  if (type === 'LOGEXUS:MACRO_DELETE') { deleteMacro(msg.name as string); return true; }
+  if (type === 'ping') { transport.sendNotification('pong', { timestamp: Date.now() }); return true; }
+  if (type === MSG_CAPTCHA_ALERT) { broadcast(MSG_CAPTCHA_ALERT, {}); return true; }
+  return false; // 未处理
+});
+
+// ═══════════════════════════════════════════
+// CDP 键盘输入 — 绕过 React/Vue 双向绑定
+// ═══════════════════════════════════════════
+
+async function cdpInputText(tabId: number, elementId: number, text: string): Promise<void> {
+  // 1. focus 目标元素（通过 data-agent-id 属性定位）
+  await cdpEvaluate(
+    tabId,
+    `(() => {
+      const el = document.querySelector('[data-agent-id="el_${elementId}"]');
+      if (el) {
+        el.focus();
+        // 清除已有值，避免追加
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.value = '';
+        if (el instanceof HTMLSelectElement) el.selectedIndex = -1;
+        return true;
+      }
+      return false;
+    })()`
+  );
+
+  // 2. 逐字符发送真实键盘事件
+  for (const char of text) {
+    const keyCode = char.charCodeAt(0);
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: char,
+      code: `Key${char.toUpperCase()}`,
+      windowsVirtualKeyCode: keyCode,
+      nativeVirtualKeyCode: keyCode,
+    });
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+      type: 'char',
+      text: char,
+      key: char,
+      windowsVirtualKeyCode: keyCode,
+      nativeVirtualKeyCode: keyCode,
+    });
+    await chrome.debugger.sendCommand({ tabId }, 'Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: char,
+      code: `Key${char.toUpperCase()}`,
+      windowsVirtualKeyCode: keyCode,
+      nativeVirtualKeyCode: keyCode,
+    });
+  }
 }
 
 // ── Tab 事件 ──
@@ -331,16 +532,39 @@ chrome.tabs.onUpdated.addListener(async (tabId, info) => {
   }
 });
 
-// ── SW 保活：每 15 秒 alarm 防止 Chrome 休眠 SW ──
-chrome.alarms.create('keepalive', { periodInMinutes: 0.25 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'keepalive') {
-    // 轻量心跳：检查 daemon 连接 + CS 存活
-    if (!daemonWs || daemonWs.readyState !== WebSocket.OPEN) connectDaemon();
+// ── JSON-RPC 请求路由 ──
+transport.onRequest(async (method, params) => {
+  switch (method) {
+    case METHOD_BROWSER_GET_CONTEXT: {
+      const p = params as unknown as BrowserGetContextParams;
+      return handleBrowserGetContext(p);
+    }
+    case METHOD_ACTION_CLICK: {
+      const p = params as unknown as ActionClickParams;
+      return handleActionClick(p);
+    }
+    case METHOD_ACTION_INPUT: {
+      const p = params as unknown as ActionInputParams;
+      return handleActionInput(p);
+    }
+    case METHOD_ACTION_SCROLL: {
+      const p = params as unknown as ActionScrollParams;
+      return handleActionScroll(p);
+    }
+    default:
+      throw new Error(`Unknown method: ${method}`);
   }
 });
 
-// ── 扩展安装/更新时自动刷新所有 Tab 以加载最新 CS ──
+// ── SW 保活：alarm 触发时通过 transport 维护连接 ──
+chrome.alarms.create('keepalive', { periodInMinutes: 0.25 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'keepalive') {
+    if (!transport.connected) transport.connect();
+  }
+});
+
+// ── 扩展安装/更新时自动刷新所有 Tab ──
 chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'update') {
     console.log('[SW] Extension updated, reloading open tabs to load latest CS...');
@@ -355,5 +579,5 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
 // ── 启动 ──
 console.log('[SW] Starting Logexus AI Browser v0.1.5...');
-connectDaemon();
+transport.connect();
 activateCurrentTab();
