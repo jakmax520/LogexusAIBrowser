@@ -150,16 +150,16 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
 // ═══════════════════════════════════════════
 
 async function handleAgentRequest(req: AgentRequest): Promise<AgentResponse> {
-  // 1. 确保 CS 就绪
-  if (connectedTabs.size === 0) await activateCurrentTab();
-  if (connectedTabs.size === 0) {
-    return { type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'error', data: { error: 'No active tab' } };
-  }
-
-  // 2. navigate — Service Worker 直接处理（无需 CS 注入）
+  // 1. navigate / newtab — Service Worker 直接处理（无需 CS 注入）
   if (req.action === 'navigate') {
     if (req.payload.value?.startsWith('newtab:')) return handleNewTab(req);
     return handleNavigate(req);
+  }
+
+  // 2. 确保 CS 就绪（后续操作需要）
+  if (connectedTabs.size === 0) await activateCurrentTab();
+  if (connectedTabs.size === 0) {
+    return { type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'error', data: { error: 'No active tab' } };
   }
 
   // 3. 授权
