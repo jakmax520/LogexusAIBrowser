@@ -290,13 +290,59 @@ function setupWebSocket(server) {
         console.error('[NativeHost] Extension WebSocket disconnected');
       });
     } else {
-      // Agent 直接通过 WebSocket 兼容（旧路径）
-      console.error('[NativeHost] Agent connected via WebSocket (legacy)');
+      // Agent 通道：JSON-RPC 2.0 + 旧协议 AGENT_REQUEST 兼容
+      console.error('[NativeHost] Agent connected via WebSocket');
+
+      // JSON-RPC method → AGENT_REQUEST action 映射
+      const METHOD_MAP = {
+        'browser.get_context': 'observe',
+        'browser.navigate': 'navigate',
+        'browser.reload': 'reload',
+        'action.click': 'click',
+        'action.input': 'type',
+        'action.scroll': 'scroll',
+      };
+
       ws.on('message', (raw) => {
         let msg;
         try { msg = JSON.parse(raw.toString()); } catch { return; }
 
-        // 转发 AGENT_REQUEST 到 Extension
+        // JSON-RPC 2.0 请求（Logexus Tauri / Python 脚本等）
+        if (msg.jsonrpc === '2.0' && msg.method && msg.id) {
+          const action = METHOD_MAP[msg.method] || msg.method;
+          const params = msg.params || {};
+          const taskId = `rpc_${msg.id}`;
+
+          // 提取 payload 参数（兼容 Rust browser.rs 的参数格式）
+          const payload = {
+            target_id: params.elementId || params.target_id || params.index || '',
+            value: params.text || params.value || (params.url || ''),
+            reasoning: `WebSocket RPC: ${msg.method}`,
+          };
+
+          sendToExtension(taskId, action, payload)
+            .then((extResult) => {
+              const data = extResult.data || {};
+              ws.send(JSON.stringify({
+                jsonrpc: '2.0',
+                result: {
+                  status: extResult.status || 'success',
+                  ...data,
+                },
+                id: msg.id,
+              }));
+            })
+            .catch((err) => {
+              ws.send(JSON.stringify({
+                jsonrpc: '2.0',
+                error: { code: -32000, message: err.message },
+                id: msg.id,
+              }));
+            });
+          return;
+        }
+
+        // 旧协议 AGENT_REQUEST
         if (msg.type === 'AGENT_REQUEST') {
           sendToExtension(msg.task_id || `ws_${Date.now()}`, msg.action, msg.payload || {})
             .then((response) => ws.send(JSON.stringify(response)))
@@ -306,6 +352,12 @@ function setupWebSocket(server) {
               status: 'error',
               data: { error: err.message },
             })));
+          return;
+        }
+
+        // ping
+        if (msg.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
         }
       });
     }
