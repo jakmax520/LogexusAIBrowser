@@ -154,6 +154,18 @@ async function handleAgentRequest(req: AgentRequest): Promise<AgentResponse> {
 
   // 1. navigate / newtab — Service Worker 直接处理（无需 CS 注入）
   if (req.action === 'navigate') {
+    // auth check（navigate 虽然不需要 CS，但仍需授权）
+    if (authRequired && !sessionAuthorized && !req.payload.__auth_approved) {
+      console.log('[SW] Auth required for navigate');
+      sessionAuthorized = !!(req.payload.__auth_approved);
+      if (!sessionAuthorized) {
+        return {
+          type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'auth_required',
+          data: { action_result: 'Authorization required', auth_action: 'navigate', auth_value: req.payload.value || '', hint: 'Resend with payload.__auth_approved: true to confirm' },
+        };
+      }
+    }
+    if (req.payload.__auth_approved) sessionAuthorized = true;
     if (req.payload.value?.startsWith('newtab:')) return handleNewTab(req);
     console.log('[SW] → handleNavigate');
     return handleNavigate(req);
