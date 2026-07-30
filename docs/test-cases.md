@@ -669,4 +669,90 @@ cd daemon && npm install && node server.js
 | TC-100 SW 不被回收 | ⬜ 待测 | |
 | TC-101 扩展更新后重载 | ⬜ 待测 | |
 
+---
+
+## 十一、Native Host v0.2.0 测试
+
+> 前置：Native Host 已启动 (`node native-host/host.js`)，Extension 已加载并连接
+
+### TC-200：Native Host 健康检查
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | Native Host 已启动 |
+| **步骤** | 1. `curl http://127.0.0.1:9527/health`<br>2. 检查返回字段 |
+| **期望** | 返回 `{"status":"STARTING"\|"RUNNING"\|"DEGRADED","extensionConnected":true/false,"pendingRequests":0,"sseConnected":false}` |
+
+### TC-201：HTTP API — observe
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | TC-200 通过，Chrome 有活跃标签页 |
+| **步骤** | 1. `POST http://127.0.0.1:9527/api/agent` body=`{"action":"observe","payload":{"reasoning":"test"}}` |
+| **期望** | 返回 `status=success`，`new_observation` 为非空数组，每个元素含 `id/tag/text/inViewport` |
+
+### TC-202：HTTP API — navigate（非阻塞授权）
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | TC-200 通过，`LOGEXUS_SKIP_AUTH=OFF` |
+| **步骤** | 1. 发送 `navigate`（不带 `__auth_approved`）<br>2. 观察返回<br>3. 发送 `navigate`（带 `__auth_approved:true`） |
+| **期望** | 第一次返回 `status=auth_required` + `auth_action/auth_value/hint`；第二次返回 `status=success`，浏览器跳转到目标 URL |
+
+### TC-203：HTTP API — 404 处理
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | Native Host 已启动 |
+| **步骤** | 1. `curl http://127.0.0.1:9527/nonexistent` |
+| **期望** | HTTP 404 |
+
+---
+
+## 十二、MCP SSE v0.2.0 测试
+
+### TC-210：MCP 工具列表
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | Native Host 已启动 |
+| **步骤** | 1. 在 Claude Code 或 MCP 客户端连接 `http://127.0.0.1:9527/sse`<br>2. 列出可用工具 |
+| **期望** | 工具列表为 13 个：`observe, click, type, navigate, extract, scroll, screenshot, evaluate, extract_network_apis, get_auth_cookies, screenshot_fullpage, export_pdf, get_storage`；不含 `network_start/stop, console_start/stop, perf_start/stop` |
+
+### TC-211：文件卸载 — 截图落盘
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | TC-200 通过，Chrome 有活跃页面 |
+| **步骤** | 1. 通过 API 或 MCP 调用 `screenshot`<br>2. 检查返回是否含 `saved_path`<br>3. 验证 `%TEMP%/logexus/` 下文件存在 |
+| **期望** | 返回 `saved_path` 非空 + `size_bytes`/`format` 字段；1 小时后文件自动清理 |
+
+### TC-212：自动拉起（restart Chrome）
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | 注册表已配置 Native Messaging Host |
+| **步骤** | 1. 完全退出 Chrome<br>2. 重新打开 Chrome<br>3. 打开 Side Panel 检查连接状态 |
+| **期望** | Extension 自动连接 Native Host；Side Panel 状态灯绿色；`health` 端点显示 `extensionConnected:true` |
+
+---
+
+## 测试结果记录 v0.2.0
+
+### Native Host
+
+| 用例 | 状态 | 备注 |
+|:--|:--|:--|
+| TC-200 Health Check | ✅ 通过 | |
+| TC-201 HTTP observe | ✅ 通过 | |
+| TC-202 auth_required 非阻塞 | ✅ 通过 | 首次 `auth_required`，携带 `__auth_approved` 后 `success` |
+| TC-203 404 处理 | ✅ 通过 | |
+
+### 集成测试
+
+| 用例 | 状态 | 备注 |
+|:--|:--|:--|
+| 京东搜索端到端 | ✅ 通过 | navigate(新标签页) → observe → 搜索页正确返回 143 个元素 |
+| Logexus Tauri WebSocket | ✅ 通过 | `browser.rs` JSON-RPC 2.0 零改动兼容 |
+
 > 测试通过标记 ✅，失败标记 ❌ 并备注原因

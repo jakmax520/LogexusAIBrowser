@@ -227,13 +227,21 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 
 | 组件 | 文件 | 说明 |
 |:--|:--|:--|
-| **Daemon** | `daemon/server.js` | WebSocket 服务器 (端口 9527) + HTTP 健康检查 (端口 9528)，Token 认证，双协议路由 |
-| **MCP Wrapper** | `mcp-wrapper/server.js` | MCP stdio 服务器，暴露 14 个工具给 Claude Code/Cursor，通过 HTTP 桥接 Daemon |
-| **Native Host** | `native-host/host.js` | Windows Native Messaging 宿主，双通道（stdin/stdout + HTTP API :9527） |
+| **Native Host** | `native-host/host.js` | **单进程网关 v0.2.0**：HTTP+WS on :9527，MCP SSE Server，JSON-RPC 2.0 转发，Native Messaging 生命周期 |
+| **文件卸载** | `native-host/file-offloader.js` | 大体积数据 >10KB 写入 %TEMP%/logexus/，TTL 自动清理 |
+| **工具注册表** | `native-host/tools/tools-registry.js` | 13 个可见 Tool（7 基础 + evaluate + 5 语义），6 个隐藏 CDP 裸工具 |
+| **语义工具** | `native-host/tools/semantic/*.js` | extract_network_apis, get_auth_cookies, screenshot_fullpage, export_pdf, get_storage |
 | **测试控制台** | `public/test-agent.html` | 浏览器端手动测试工具，支持所有 action |
 | **集成测试** | `scripts/test_jd.py` | Python 脚本，京东搜索端到端 JSON-RPC 流程 |
-| **连接验证** | `scripts/verify-ws.py` | Daemon WebSocket 连接验证 |
+| **连接验证** | `scripts/verify-ws.py` | WebSocket 连接验证 |
 | **压力测试** | `scripts/stress-test.ts` | 50 步压力测试脚本 |
+
+**已废弃（v0.2.0 删除）**：
+
+| 组件 | 原因 |
+|:--|:--|
+| `daemon/server.js` | 路由逻辑合并入 Native Host |
+| `mcp-wrapper/server.js` | MCP 能力合并入 Native Host |
 
 ---
 
@@ -446,12 +454,20 @@ LogexusAIBrowser/
 │       ├── types.ts                      # ToolAction, PageState, AgentRequest/Response, AuditEntry
 │       ├── messages.ts                   # 消息类型常量
 │       └── jsonrpc.ts                    # JSON-RPC 2.0 类型、错误码、编解码
-├── daemon/
-│   └── server.js                         # WebSocket 守护进程 (端口 9527)
-├── mcp-wrapper/
-│   └── server.js                         # MCP stdio 服务器 (14 个工具)
-├── native-host/
-│   └── host.js                           # Windows Native Messaging 宿主
+├── native-host/                           # 单进程网关 (v0.2.0)
+│   ├── host.js                           # HTTP+WS+MCP SSE Server + 路由
+│   ├── package.json                      # @modelcontextprotocol/sdk + ws
+│   ├── file-offloader.js                 # 大体积数据文件卸载
+│   ├── install.bat                       # Windows Native Messaging 注册
+│   ├── host.bat                          # Chrome 拉起入口
+│   └── tools/
+│       ├── tools-registry.js             # 13 可见 + 6 隐藏 Tool
+│       └── semantic/                     # 5 个语义 CDP Tool
+│           ├── extract-network-apis.js
+│           ├── get-auth-cookies.js
+│           ├── screenshot-fullpage.js
+│           ├── export-pdf.js
+│           └── get-storage.js
 ├── scripts/
 │   ├── test_jd.py                        # 京东集成测试
 │   ├── verify-ws.py                      # WebSocket 连接验证
@@ -518,3 +534,6 @@ LogexusAIBrowser/
 | WebSocket 连接不稳定 | 指令丢失 | 指数退避重连 + 会话恢复 + 保活三角防止 SW 回收 |
 | MV3 Service Worker 回收 | 连接断开 | 15s alarm + 20s ping + 20s platformInfo 三重保活 |
 | 同一元素重复索引 | Agent 混淆 | 每次 observe 前清除旧 `data-agent-id`，重新分配 |
+| Native Host 崩溃 | 所有外部 Agent 通信中断 | Chrome 重启时自动恢复；Logexus Tauri 备选方案监控重启 |
+| 临时文件残留 | 磁盘占满 | FileOffloader 多级清理（TTL + 硬上限 + 生命周期联动） |
+| 端口冲突 (:9527) | Native Host 无法启动 | 重试机制 + 降级端口方案 |
