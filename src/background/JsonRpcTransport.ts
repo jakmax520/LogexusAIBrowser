@@ -31,7 +31,7 @@ const PING_INTERVAL_MS = 20_000;
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_CAP_MS = 30_000;
 const STORAGE_SESSION_KEY = 'jsonrpc_sessionId';
-const EXTENSION_VERSION = '0.1.5';
+const EXTENSION_VERSION = '0.2.0';
 
 // ── 请求处理器类型 ──
 export type RequestHandler = (

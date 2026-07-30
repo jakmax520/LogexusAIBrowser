@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Logexus AI Browser",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "AI-powered browser operator. Expose your Chrome as a secure automation engine for Claude Code, Cursor, and custom AI Agents via local WebSocket API.",
   "icons": {
     "16": "icons/icon16.png",
