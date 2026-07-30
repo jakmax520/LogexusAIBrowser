@@ -408,18 +408,18 @@ async function main() {
     }
   });
 
+  const isManualMode = process.stdin.isTTY;
+  if (isManualMode) {
+    console.error('[NativeHost] Running in manual mode (keep alive with Ctrl+C)');
+  }
+
   process.stdin.on('end', () => {
-    console.error('[NativeHost] stdin closed by Chrome');
-    shutdown();
+    if (!isManualMode) {
+      console.error('[NativeHost] stdin closed by Chrome');
+      shutdown();
+    }
   });
 
-  // Native Messaging stdin 读取（Chrome 生命周期 + 备用通道）
-  process.stdin.on('data', (chunk) => {
-    // Native Messaging 备用：解析 4 字节长度头 + JSON
-    // 当前主要通信走 WebSocket，stdin 仅用于接收 Chrome 关闭信号
-  });
-
-  // 保持进程存活
   process.stdin.resume();
 }
 
