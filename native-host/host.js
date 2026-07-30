@@ -73,13 +73,12 @@ function sendToExtension(taskId, action, payload = {}) {
       return;
     }
 
-    const rpcId = `rpc_${taskId}`;
     const timer = setTimeout(() => {
-      pendingRequests.delete(rpcId);
+      pendingRequests.delete(taskId);
       reject(new Error('Extension timeout after 45s'));
     }, EXTENSION_TIMEOUT_MS);
 
-    pendingRequests.set(rpcId, (response) => {
+    pendingRequests.set(taskId, (response) => {
       clearTimeout(timer);
       resolve(response);
     });
@@ -263,7 +262,7 @@ function setupWebSocket(server) {
         let msg;
         try { msg = JSON.parse(raw.toString()); } catch { return; }
 
-        // Extension → Host：AGENT_RESPONSE（路由给 pending 请求）
+        // Extension → Host：AGENT_RESPONSE
         if (msg.type === 'AGENT_RESPONSE' && msg.task_id) {
           const resolve = pendingRequests.get(msg.task_id);
           if (resolve) { pendingRequests.delete(msg.task_id); resolve(msg); }
