@@ -202,6 +202,10 @@ async function handleNavigate(req: AgentRequest): Promise<AgentResponse> {
     }
     currentTabId = tab.id!;
     console.log('[SW] navigate OK — tab:', tab.id);
+
+    // 归入 My Logexus Browser 分组
+    getOrCreateLogexusGroup(tab.id!).catch(() => {});
+
     return { type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'success', data: { action_result: `Navigated to ${url}`, current_url: tab.url || url } };
   } catch (err) {
     console.error('[SW] navigate FAILED:', err);
