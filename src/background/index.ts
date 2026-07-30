@@ -165,14 +165,26 @@ async function handleAgentRequest(req: AgentRequest): Promise<AgentResponse> {
     return { type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'error', data: { error: 'No active tab' } };
   }
 
-  // 3. 授权
+  // 3. 授权 — 非阻塞模式：返回 auth_required 让调用方提示用户
   if (req.action !== 'observe' && req.action !== 'screenshot' && authRequired && !sessionAuthorized) {
-    const approved = await requestAuth(req);
-    if (!approved) {
-      emitAudit(req, 'blocked', 'Authorization denied');
-      return { type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'blocked', data: { action_result: 'User denied authorization' } };
+    // 允许调用方通过 __auth_approved 确认授权
+    if (req.payload.__auth_approved) {
+      sessionAuthorized = true;
+      console.log('[SW] Auth approved by caller');
+    } else {
+      console.log('[SW] Auth required — returning auth_required for:', req.action, req.task_id);
+      return {
+        type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'auth_required',
+        data: {
+          action_result: 'Authorization required',
+          auth_action: req.action,
+          auth_target: req.payload.target_id || '',
+          auth_value: req.payload.value || '',
+          auth_reasoning: req.payload.reasoning || '',
+          hint: 'Resend with payload.__auth_approved: true to confirm',
+        },
+      };
     }
-    sessionAuthorized = true;
   }
 
   // 4. 路由
