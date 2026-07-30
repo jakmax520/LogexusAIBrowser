@@ -46,9 +46,27 @@ const connectedTabs = new Set<number>();
 let currentTabId: number | null = null;
 const uiPorts = new Set<chrome.runtime.Port>();
 let auditIdCounter = 0;
-let authRequired = false; // TODO: 上线前改回 true
+let authRequired = true;
 let sessionAuthorized = false;
 const logexusGroupIds = new Map<number, number>(); // windowId → groupId
+
+// 运行时从 chrome.storage 加载 LOGEXUS_SKIP_AUTH 开关
+async function loadSkipAuth(): Promise<void> {
+  try {
+    const stored = await chrome.storage.local.get('logexus_skip_auth');
+    if (stored.logexus_skip_auth === true) {
+      authRequired = false;
+      console.log('[SW] LOGEXUS_SKIP_AUTH = ON — auth bypassed');
+    }
+  } catch { /* storage 不可用时忽略 */ }
+}
+
+// 对外暴露：通过 chrome.runtime.onMessage 接收开关切换
+function setSkipAuth(skip: boolean): void {
+  authRequired = !skip;
+  chrome.storage.local.set({ logexus_skip_auth: skip });
+  console.log(`[SW] LOGEXUS_SKIP_AUTH = ${skip ? 'ON' : 'OFF'}`);
+}
 
 // ── sendMessage 工具函数 ──
 function sendToTab(tabId: number, msg: Record<string, unknown>): Promise<Record<string, unknown> | null> {
@@ -109,6 +127,15 @@ chrome.runtime.onMessageExternal.addListener((req: AgentRequest, _sender, sendRe
 chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
   if (req.type === MSG_AGENT_REQUEST) {
     handleAgentRequest(req as AgentRequest).then(sendResponse);
+    return true;
+  }
+  if (req.type === 'SET_SKIP_AUTH') {
+    setSkipAuth(!!req.payload?.skip);
+    sendResponse({ success: true, skipAuth: !authRequired });
+    return true;
+  }
+  if (req.type === 'GET_SKIP_AUTH') {
+    sendResponse({ skipAuth: !authRequired });
     return true;
   }
   return false;
@@ -734,6 +761,11 @@ try {
 } catch (err) {
   console.warn('[SW] Native Messaging unavailable (host not registered?):', err);
 }
+
+// 首次启动默认跳过授权（LOGEXUS_SKIP_AUTH = ON），用户可通过 Side Panel 或消息关闭
+loadSkipAuth().then(() => {
+  if (!authRequired) sessionAuthorized = true;
+});
 
 transport.connect();
 activateCurrentTab();
