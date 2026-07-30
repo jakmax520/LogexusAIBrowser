@@ -139,7 +139,65 @@ Logexus 的 LangGraph sidecar 通过 `tools/browser.py` → HTTP `:47800` → Ru
 
 这条链路在 v0.2.0 下**完全兼容**，因为 Rust 层的 `send_browser_action()` 已经直接对接了 WebSocket/JSON-RPC 2.0 路径。
 
-### 3.6 使用 v0.2.0 新增的 5 个语义 Tool
+### 3.6 授权流程（LOGEXUS_SKIP_AUTH）
+
+**默认行为**：首次安装 `LOGEXUS_SKIP_AUTH = OFF`，非 observe 操作需授权确认。
+
+**非阻塞授权**：Extension 不弹窗、不阻塞，直接返回 `auth_required` 给调用方。
+
+```
+Logexus 发送: navigate(https://www.baidu.com)
+        ↓
+Extension 返回: {"status":"auth_required","data":{"auth_action":"navigate",...}}
+        ↓
+Logexus 对话窗: "确认执行 navigate(https://www.baidu.com)? [允许] [拒绝]"
+        ↓ 用户点 [允许]
+Logexus 重发: navigate(https://www.baidu.com) + __auth_approved: true
+        ↓
+Extension 返回: {"status":"success","data":{...}}
+```
+
+**Rust 端实现示例**：
+
+```rust
+// browser.rs 中已有的 send_browser_action 函数，增强授权处理
+pub(crate) async fn send_browser_action_with_auth(
+    action: &str, payload: serde_json::Value
+) -> Result<String, String> {
+    // 第一次尝试
+    let result = send_browser_action(action, payload.clone()).await?;
+    
+    // 检查是否需要授权
+    let v: serde_json::Value = serde_json::from_str(&result).unwrap_or_default();
+    if v["status"] == "auth_required" {
+        // 发送 auth_required 事件到前端，让用户确认
+        emit_tauri_event("browser-auth-required", &v["data"]);
+        
+        // 等待用户确认后，携带 __auth_approved 重试
+        let mut approved_payload = payload.clone();
+        if let Some(obj) = approved_payload.as_object_mut() {
+            obj.insert("__auth_approved".into(), serde_json::Value::Bool(true));
+        }
+        return send_browser_action(action, approved_payload).await;
+    }
+    
+    Ok(result)
+}
+```
+
+**查询/切换授权状态**（通过 `chrome.runtime.sendMessage`）：
+
+```javascript
+// 查询
+chrome.runtime.sendMessage(EXTENSION_ID, {type: 'GET_SKIP_AUTH'}, resp => {
+    // resp.skipAuth: true → 已跳过, false → 需授权
+});
+
+// 永久关闭授权（开发调试用）
+chrome.runtime.sendMessage(EXTENSION_ID, {type: 'SET_SKIP_AUTH', payload: {skip: true}});
+```
+
+### 3.7 使用 v0.2.0 新增的 5 个语义 Tool
 
 v0.2.0 新增的语义工具可以通过 MCP SSE 或直接通过 Native Host 的 AGENT_REQUEST 通道调用：
 
@@ -385,7 +443,7 @@ curl: (7) Failed to connect to 127.0.0.1 port 9527
 ```
 
 **原因**: Extension 连接了但未响应指令。通常是以下原因之一：
-1. **授权未通过** — 打开 Side Panel，看是否有授权弹窗等待确认
+1. **授权未通过** — 返回 `auth_required` 状态。调用方需携带 `__auth_approved: true` 重试
 2. **无活跃标签页** — 在 Chrome 中打开一个网页后再试
 3. **Content Script 未注入** — 刷新目标页面
 
@@ -417,6 +475,6 @@ macOS:   /tmp/logexus/
 | **网络绑定** | 所有服务仅监听 `127.0.0.1`，不暴露到外部网络 |
 | **Token 认证** | WebSocket 连接需 Token（默认 `lx_3696ac533d9ddfb81d5e50340f205317`），可通过 `LOGEXUS_TOKEN` 环境变量覆盖 |
 | **操作白名单** | Extension 仅执行 15 种预定义原子操作，禁止任意代码 |
-| **会话授权** | 首次非 observe 操作需用户在 Side Panel 点击确认 |
+| **会话授权** | 首次非 observe 操作返回 `auth_required`，调用方携带 `__auth_approved: true` 重试即可 |
 | **本地文件** | 文件卸载写入 `%TEMP%/logexus/`，仅在本地可读 |
 | **关闭即停** | 关闭被管理的标签页立即终止所有操作 |
