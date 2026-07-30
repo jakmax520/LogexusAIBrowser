@@ -50,15 +50,19 @@ let authRequired = true;
 let sessionAuthorized = false;
 const logexusGroupIds = new Map<number, number>(); // windowId → groupId
 
-// 运行时从 chrome.storage 加载 LOGEXUS_SKIP_AUTH 开关
+// 从 chrome.storage 加载 LOGEXUS_SKIP_AUTH 开关
+// 首次运行（无存储值）时默认跳过授权
 async function loadSkipAuth(): Promise<void> {
   try {
     const stored = await chrome.storage.local.get('logexus_skip_auth');
-    if (stored.logexus_skip_auth === true) {
-      authRequired = false;
-      console.log('[SW] LOGEXUS_SKIP_AUTH = ON — auth bypassed');
+    // 无存储值 → 默认 true（跳过授权）；明确存储 false → 启用授权
+    const skip = stored.logexus_skip_auth !== false;
+    authRequired = !skip;
+    if (skip) {
+      sessionAuthorized = true;
+      console.log('[SW] LOGEXUS_SKIP_AUTH = ON (default) — auth bypassed');
     }
-  } catch { /* storage 不可用时忽略 */ }
+  } catch { /* storage 不可用 */ }
 }
 
 // 对外暴露：通过 chrome.runtime.onMessage 接收开关切换
@@ -763,9 +767,7 @@ try {
 }
 
 // 首次启动默认跳过授权（LOGEXUS_SKIP_AUTH = ON），用户可通过 Side Panel 或消息关闭
-loadSkipAuth().then(() => {
-  if (!authRequired) sessionAuthorized = true;
-});
+loadSkipAuth();
 
 transport.connect();
 activateCurrentTab();
