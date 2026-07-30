@@ -408,19 +408,9 @@ async function main() {
     }
   });
 
-  const isManualMode = process.stdin.isTTY;
-  if (isManualMode) {
-    console.error('[NativeHost] Running in manual mode (keep alive with Ctrl+C)');
-  }
-
-  process.stdin.on('end', () => {
-    if (!isManualMode) {
-      console.error('[NativeHost] stdin closed by Chrome');
-      shutdown();
-    }
-  });
-
-  process.stdin.resume();
+  // 进程退出时的清理
+  process.on('SIGINT', () => shutdown());
+  process.on('SIGTERM', () => shutdown());
 }
 
 main().catch((err) => {
