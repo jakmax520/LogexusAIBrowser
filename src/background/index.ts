@@ -716,6 +716,24 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 });
 
 // ── 启动 ──
-console.log('[SW] Starting Logexus AI Browser v0.1.5...');
+console.log('[SW] Starting Logexus AI Browser v0.2.0...');
+
+// 通过 Native Messaging 触发 Chrome 自动拉起 Native Host（方案二）
+// Chrome 根据注册表 HKCU\Software\Google\Chrome\NativeMessagingHosts\com.logexus.browser.host 找到 host.bat 并启动
+try {
+  const nativePort = chrome.runtime.connectNative('com.logexus.browser.host');
+  nativePort.onMessage.addListener((msg) => {
+    // Native Messaging 通道仅用于生命周期管理，业务通信走 WebSocket
+    if (msg.type === 'pong') { /* keep-alive */ }
+  });
+  nativePort.onDisconnect.addListener(() => {
+    // Chrome 退出或 Host 崩溃时触发；不影响 WebSocket 重连
+    console.warn('[SW] Native Messaging port disconnected');
+  });
+  console.log('[SW] Native Messaging port opened — Native Host auto-launched');
+} catch (err) {
+  console.warn('[SW] Native Messaging unavailable (host not registered?):', err);
+}
+
 transport.connect();
 activateCurrentTab();

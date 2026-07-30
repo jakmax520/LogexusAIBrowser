@@ -460,6 +460,42 @@ async function main() {
     }
   });
 
+  // ── Native Messaging stdin/stdout（方案二：Chrome 自动拉起 + 生命周期）──
+  let nmBuffer = Buffer.alloc(0);
+  let nmReading = false;
+  let nmExpectedLen = 0;
+
+  process.stdin.on('data', (chunk) => {
+    nmBuffer = Buffer.concat([nmBuffer, chunk]);
+
+    while (nmBuffer.length >= 4) {
+      if (!nmReading) {
+        nmExpectedLen = nmBuffer.readUInt32LE(0);
+        nmReading = true;
+        nmBuffer = nmBuffer.slice(4);
+      }
+      if (nmReading && nmBuffer.length >= nmExpectedLen) {
+        let msg;
+        try {
+          msg = JSON.parse(nmBuffer.toString('utf-8', 0, nmExpectedLen));
+        } catch {
+          msg = null;
+        }
+        nmBuffer = nmBuffer.slice(nmExpectedLen);
+        nmReading = false;
+
+        if (msg?.type === 'ping') {
+          const pong = Buffer.from(JSON.stringify({ type: 'pong', status: 'ok' }), 'utf-8');
+          const header = Buffer.alloc(4);
+          header.writeUInt32LE(pong.length, 0);
+          process.stdout.write(Buffer.concat([header, pong]));
+        }
+      } else {
+        break;
+      }
+    }
+  });
+
   // 进程退出时的清理
   process.on('SIGINT', () => shutdown());
   process.on('SIGTERM', () => shutdown());
