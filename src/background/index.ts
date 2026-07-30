@@ -150,9 +150,12 @@ chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
 // ═══════════════════════════════════════════
 
 async function handleAgentRequest(req: AgentRequest): Promise<AgentResponse> {
+  console.log('[SW] handleAgentRequest:', req.action, req.task_id);
+
   // 1. navigate / newtab — Service Worker 直接处理（无需 CS 注入）
   if (req.action === 'navigate') {
     if (req.payload.value?.startsWith('newtab:')) return handleNewTab(req);
+    console.log('[SW] → handleNavigate');
     return handleNavigate(req);
   }
 
@@ -189,31 +192,21 @@ async function handleNavigate(req: AgentRequest): Promise<AgentResponse> {
     return { type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'error', data: { error: 'Missing URL' } };
   }
 
-  let tab: chrome.tabs.Tab;
-  if (currentTabId) {
-    tab = await chrome.tabs.update(currentTabId, { url, active: true });
-  } else {
-    tab = await chrome.tabs.create({ url, active: true });
-  }
-  currentTabId = tab.id!;
-
-  // 异步等待加载完成（不阻塞返回）
-  waitForPageLoad(tab.id!).then(() => {
-    // 尝试注入 CS
-    for (let i = 0; i < 20; i++) {
-      sendToTab(tab.id!, { type: MSG_PING }).then(resp => {
-        if (resp?.type === MSG_PONG && tab.id) {
-          connectedTabs.add(tab.id);
-          broadcast(MSG_CONNECTION_STATUS, { connected: true, tabCount: connectedTabs.size, currentTabId: tab.id, url: tab.url });
-        }
-      });
+  try {
+    console.log('[SW] handleNavigate:', url, 'currentTabId:', currentTabId);
+    let tab: chrome.tabs.Tab;
+    if (currentTabId) {
+      tab = await chrome.tabs.update(currentTabId, { url, active: true });
+    } else {
+      tab = await chrome.tabs.create({ url, active: true });
     }
-  });
-
-  return {
-    type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'success',
-    data: { action_result: `Navigating to ${url}`, current_url: url },
-  };
+    currentTabId = tab.id!;
+    console.log('[SW] navigate OK — tab:', tab.id);
+    return { type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'success', data: { action_result: `Navigated to ${url}`, current_url: tab.url || url } };
+  } catch (err) {
+    console.error('[SW] navigate FAILED:', err);
+    return { type: 'AGENT_RESPONSE', task_id: req.task_id, status: 'error', data: { error: `Navigate: ${err instanceof Error ? err.message : String(err)}` } };
+  }
 }
 
 // ═══════════════════════════════════════════
