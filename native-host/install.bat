@@ -43,8 +43,20 @@ if %ERRORLEVEL% EQU 0 (
   echo   注册成功！
   echo   Host: %HOST_PATH%
   echo   Manifest: %MANIFEST_PATH%
-  echo   请重启 Chrome 使配置生效
   echo ============================================
+
+  REM 安装 Node.js 依赖
+  echo.
+  echo 正在安装 Native Host 依赖...
+  cd /d "%HOST_DIR%"
+  call npm install --production
+  if %ERRORLEVEL% EQU 0 (
+    echo 依赖安装完成
+  ) else (
+    echo 依赖安装失败，请检查 Node.js 是否已安装
+  )
+  echo.
+  echo 请重启 Chrome 使配置生效
 ) else (
   echo 注册表写入失败，请以管理员身份运行
 )
