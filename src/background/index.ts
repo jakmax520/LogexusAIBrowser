@@ -50,16 +50,17 @@ let sessionAuthorized = false;
 const logexusGroupIds = new Map<number, number>(); // windowId → groupId
 
 // 从 chrome.storage 加载 LOGEXUS_SKIP_AUTH 开关
-// 首次运行（无存储值）时默认跳过授权
+// 加载 LOGEXUS_SKIP_AUTH — 默认关闭（authRequired=true，首次操作需授权）
 async function loadSkipAuth(): Promise<void> {
   try {
     const stored = await chrome.storage.local.get('logexus_skip_auth');
-    // 无存储值 → 默认 true（跳过授权）；明确存储 false → 启用授权
-    const skip = stored.logexus_skip_auth !== false;
+    const skip = stored.logexus_skip_auth === true; // 明确设 true 才跳过
     authRequired = !skip;
     if (skip) {
       sessionAuthorized = true;
-      console.log('[SW] LOGEXUS_SKIP_AUTH = ON (default) — auth bypassed');
+      console.log('[SW] LOGEXUS_SKIP_AUTH = ON — auth bypassed');
+    } else {
+      console.log('[SW] LOGEXUS_SKIP_AUTH = OFF — auth required');
     }
   } catch { /* storage 不可用 */ }
 }
