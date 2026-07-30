@@ -325,7 +325,7 @@ async function main() {
   await initOffloader();
 
   // 启动 HTTP Server（MCP SSE endpoint + health check + 旧路径兼容）
-  httpServer = createServer((req, res) => {
+  httpServer = createServer(async (req, res) => {
     if (!handleSseConnection(req, res)) {
       // CORS
       res.setHeader('Access-Control-Allow-Origin', '*');
