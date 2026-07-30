@@ -596,6 +596,10 @@ async function handleNewTab(req: AgentRequest): Promise<AgentResponse> {
   try {
     const tab = await chrome.tabs.create({ url, active: true });
     currentTabId = tab.id!;
+
+    // 归入 My Logexus Browser 分组
+    getOrCreateLogexusGroup(tab.id!).catch(() => {});
+
     await new Promise((r) => {
       const l = (tid: number, info: chrome.tabs.TabChangeInfo) => {
         if (tid === tab.id && info.status === 'complete') { chrome.tabs.onUpdated.removeListener(l); r(undefined); }
