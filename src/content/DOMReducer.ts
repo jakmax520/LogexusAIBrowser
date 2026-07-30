@@ -10,7 +10,7 @@ const INTERACTIVE_ROLES = new Set([
   'radio', 'checkbox', 'switch', 'tab', 'searchbox',
 ]);
 
-const MAX_ELEMENTS = 80;
+const MAX_ELEMENTS = 150;
 
 export interface InteractiveElement {
   id: string;

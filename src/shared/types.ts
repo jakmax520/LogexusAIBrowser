@@ -45,6 +45,7 @@ export interface AgentRequest {
     target_id?: string; // "el_15"
     value?: string;     // 输入文本 / URL / CSS 选择器 / scroll 方向
     reasoning?: string; // Agent 思考过程，展示在 Side Panel
+    __auth_approved?: boolean; // 用户已确认授权（非阻塞 auth 流程）
   };
 }
 
@@ -52,13 +53,19 @@ export interface AgentRequest {
 export interface AgentResponse {
   type: 'AGENT_RESPONSE';
   task_id: string;
-  status: 'success' | 'error' | 'blocked';
+  status: 'success' | 'error' | 'blocked' | 'auth_required';
   data: {
     action_result?: string;
     current_url?: string;
     new_observation?: InteractiveElement[];
     screenshot?: string;    // base64, 校验失败时补充
     error?: string;
+    // auth_required 状态专用字段
+    auth_action?: string;
+    auth_target?: string;
+    auth_value?: string;
+    auth_reasoning?: string;
+    hint?: string;
   };
 }
 

@@ -631,18 +631,6 @@ async function handleNewTab(req: AgentRequest): Promise<AgentResponse> {
   }
 }
 
-function requestAuth(req: AgentRequest): Promise<boolean> {
-  return new Promise((resolve) => {
-    broadcast(MSG_AUTH_REQUEST, { requestId: req.task_id, action: req.action, targetId: req.payload.target_id, value: req.payload.value, reasoning: req.payload.reasoning, pageUrl: '' });
-    const handler = (e: Event) => {
-      const d = (e as CustomEvent).detail;
-      if (d.requestId === req.task_id) { self.removeEventListener('auth:response', handler); resolve(d.approved); }
-    };
-    self.addEventListener('auth:response', handler);
-    setTimeout(() => { self.removeEventListener('auth:response', handler); resolve(false); }, 30000);
-  });
-}
-
 function emitAudit(req: AgentRequest, status: 'success' | 'error' | 'blocked', result: string): void {
   auditIdCounter++;
   broadcast(MSG_AUDIT_LOG, {

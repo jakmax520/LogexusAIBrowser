@@ -6,7 +6,7 @@
 
 Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为安全的自动化执行引擎，供外部 AI Agent（Claude Code、Cursor、自定义 Python/Node.js 脚本）通过本地 WebSocket API 驱动，复用已有登录态执行跨网站自动化任务。
 
-### 1.2 核心架构决策：纯执行器 + 安全网关
+### 1.2 核心架构决策：纯执行器 + 安全网关 + 单进程桥接
 
 本扩展**不内置 LLM**。AI 推理能力由外部 Agent 提供，扩展自身定位为：
 
@@ -14,39 +14,43 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 - **执行引擎**：将外部指令翻译为浏览器原生操作
 - **状态采集器**：DOM 降噪、页面结构化、CDP 深度检测
 
+**v0.2.0 架构演进**：废弃独立 Daemon 和 MCP Wrapper，统一为**单进程 Native Host**，同时暴露 WebSocket、MCP SSE、HTTP API 三种协议。
+
 ```
-外部 AI Agent (Claude Code / Cursor / 自定义脚本)
+外部 AI Agent (Claude Code / Cursor / Python 脚本 / Logexus Tauri)
         │
-        ▼  JSON-RPC 2.0 over WebSocket (ws://127.0.0.1:9527)
-        │  或 AGENT_REQUEST over chrome.runtime.sendMessage
+        ├── MCP SSE ──── http://127.0.0.1:9527/sse (Claude Code / LangGraph)
+        ├── JSON-RPC 2.0 ─ ws://127.0.0.1:9527 (Logexus Tauri / 脚本)
+        └── HTTP POST ── http://127.0.0.1:9527/api/agent (curl 测试)
         │
-┌───────▼────────────────────────────────────────────┐
-│              Chrome Extension (端侧执行器)           │
-│  ┌─────────────────────────────────────────────────┐│
-│  │           Service Worker (API 网关 + 授权)       ││
-│  │  JsonRpcTransport ←→ index.ts ←→ MacroEngine   ││
-│  │       CDPEngine (debugger API)                  ││
-│  └─────────────────────────────────────────────────┘│
-│  ┌─────────────────────────────────────────────────┐│
-│  │           Side Panel (监控 + 授权面板)           ││
-│  │  StatusIndicator | AuthDialog | AuditLog        ││
-│  │  TemplatePanel (指令模板)                        ││
-│  └─────────────────────────────────────────────────┘│
-│  ┌──────────────┐ ┌──────────────┐                  │
-│  │ Content Script│ │ Content Script│     ...         │
-│  │ DOMReducer   │ │ DOMReducer   │                  │
-│  │ ElementIndexer│ │ ElementIndexer│                  │
-│  │ ActionExecutor│ │ ActionExecutor│                  │
-│  │ MutationWatcher│ │ MutationWatcher│                 │
-│  └──────────────┘ └──────────────┘                  │
-└─────────────────────────────────────────────────────┘
-        │
-        ▼  Native Messaging / HTTP
+        ▼
 ┌───────────────────────────────────────────────────────┐
-│              基础设施 (Node.js)                        │
-│  Daemon (WebSocket Server) :9527                      │
-│  MCP Wrapper (stdio → HTTP 桥接)                      │
-│  Native Host (Native Messaging → HTTP 桥接)            │
+│            Native Host (Node.js 单进程)                │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │  MCP SSE Server (13 个 Tools，含 5 语义 Tool)    │  │
+│  │  WebSocket Server (JSON-RPC 2.0 + AGENT_REQUEST) │  │
+│  │  File Offloader (>10KB 自动落盘)                  │  │
+│  └──────────────┬──────────────────────────────────┘  │
+│                 │ WebSocket (127.0.0.1:9527)           │
+└─────────────────┼─────────────────────────────────────┘
+                  │
+┌─────────────────▼─────────────────────────────────────┐
+│              Chrome Extension (端侧执行器)              │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │   Service Worker (API 网关 + 授权 + 审计)        │  │
+│  │   JsonRpcTransport ←→ index.ts ←→ MacroEngine   │  │
+│  │   CDPEngine (debugger API)                       │  │
+│  ├─────────────────────────────────────────────────┤  │
+│  │   Side Panel (监控 + 授权)                        │  │
+│  │   StatusIndicator | AuthDialog | AuditLog        │  │
+│  └─────────────────────────────────────────────────┘  │
+│  ┌──────────────┐ ┌──────────────┐                     │
+│  │ Content Script│ │ Content Script│    ...             │
+│  │ DOMReducer   │ │ DOMReducer   │                     │
+│  │ ElementIndexer│ │ ElementIndexer│                     │
+│  │ ActionExecutor│ │ ActionExecutor│                     │
+│  │ MutationWatcher│ │ MutationWatcher│                    │
+│  └──────────────┘ └──────────────┘                     │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -56,11 +60,14 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 |:--|:--|
 | **会话复用** | 不存密码，直接用浏览器本地登录态，天然绕过 CAPTCHA |
 | **安全沙箱** | 仅支持 15 种预定义原子操作，禁止 LLM 生成的任意代码执行 |
-| **双协议支持** | JSON-RPC 2.0 (WebSocket) + AGENT_REQUEST (直接消息)，灵活接入 |
+| **三协议统一** | JSON-RPC 2.0 (WebSocket) + MCP SSE + HTTP API 共存于单进程 Native Host |
+| **自动拉起** | Chrome 启动时通过 Native Messaging 自动启动 Native Host，无需手动操作 |
 | **CDP 深度检测** | 通过 Chrome Debugger API 提供 JS 执行、网络抓包、控制台、性能分析 |
+| **语义化 Tool** | 5 个高级封装工具（网络 API 抓取/Cookie 导出/全页截图/PDF 导出/存储读取） |
+| **文件卸载** | 大体积数据（>10KB）自动写入临时目录，防止 MCP 管道阻塞 |
 | **全程可控** | Side Panel 实时直播执行过程，随时接管或关闭标签页立即终止 |
 | **操作可审计** | 每一步完整记录到 IndexedDB，支持筛选/导出/跨会话恢复 |
-| **远程就绪** | WebSocket Daemon 已就绪，支持本地 Agent 接入 |
+| **零改动集成** | Logexus Tauri `browser.rs` 无需修改，WebSocket JSON-RPC 2.0 即插即用 |
 
 ### 1.4 目标场景
 
@@ -79,11 +86,14 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 | 决策项 | 选择 | 理由 |
 |:--|:--|:--|
 | Agent 智能 | 外部化（不在扩展内嵌 LLM） | 扩展保持轻量；AI 模型独立迭代；避免扩展体积膨胀 |
-| 通信协议 | JSON-RPC 2.0 为主 + 旧协议兼容 | 标准化、可扩展、工具链成熟；同时平滑迁移旧版调用方 |
+| 通信协议 | JSON-RPC 2.0 + MCP SSE + HTTP 三合一 | JSON-RPC 兼容 Tauri/Python；MCP SSE 兼容 Claude Code/LangGraph；HTTP 用于快速测试 |
+| 网关架构 | 单进程 Native Host | v0.2.0 废弃 Daemon + MCP Wrapper，统一为一个 Node.js 进程，消除 HTTP 跳转 |
+| 自动拉起 | `chrome.runtime.connectNative` | Extension 启动时 Chrome 自动拉起 Native Host，关闭时自动退出 — 无需手动 `node host.js` |
+| 工具策略 | 13 个可见 Tool + 文件卸载 | 工具降噪隐藏 6 个冗余 CDP 裸操作；5 个语义 Tool 封装常见业务场景；大体积数据文件落盘 |
 | 截图策略 | 按需触发（截图是独立 action） | 由外部 Agent 决定何时截图，扩展不自动决策 |
 | LLM Provider | 不内置 | 由外部 Agent 自行选择 LLM（OpenAI/Anthropic/Ollama 等） |
 | UI 风格 | 富交互面板 + 暗色模式 | 折叠卡片 + 状态灯 + 中文标签，消除"黑盒效应" |
-| 传输层 | WebSocket Daemon + Native Messaging 双通道 | Daemon 用于本地 Agent；Native Messaging 用于系统级集成 |
+| 传输层 | Native Messaging（自动拉起）+ WebSocket（业务通信） | Native Messaging 管理进程生命周期；WebSocket 承载所有业务数据 |
 
 ---
 
