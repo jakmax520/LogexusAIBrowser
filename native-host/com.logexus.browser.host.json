@@ -1,9 +1,9 @@
 {
-    "path":  "D:\\CCWorkSpace\\LogexusAIBrowser\\native-host\\host.bat",
-    "description":  "Logexus AI Browser Native Messaging Host",
     "name":  "com.logexus.browser.host",
+    "description":  "Logexus AI Browser Native Messaging Host",
+    "path":  "/Volumes/macData/workspace/GitHubSpace/LogexusAIBrowser/native-host/host.sh",
+    "type":  "stdio",
     "allowed_origins":  [
-                            "chrome-extension://oecbnmfnnfpkldmahkbgannanaocgead/"
-                        ],
-    "type":  "stdio"
+        "chrome-extension://mpgmlegdejcnmkahnbfjmkdfeplblaab/"
+    ]
 }

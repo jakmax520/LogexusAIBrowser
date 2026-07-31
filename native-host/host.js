@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// ↑ Chrome Native Messaging on macOS/Linux requires executable with shebang
 /**
  * Logexus AI Browser — Native Host v0.2.0
  *
@@ -50,6 +51,7 @@ let httpServer = null;
 let wss = null;
 let sseTransport = null;
 let extensionWs = null;
+let nmLifecycle = false; // NM 生命周期模式（Chrome 自动拉起/退出），消息仍走 WebSocket
 
 function transition(newState) {
   console.error(`[NativeHost] ${state} → ${newState}`);
@@ -63,8 +65,8 @@ const pendingRequests = new Map();
 let currentUrl = 'about:blank';
 
 /**
- * 向 Extension 发送 JSON-RPC 请求并等待响应。
- * 优先通过 WebSocket；若 Extension 未连接则报错。
+ * 向 Extension 发送 AGENT_REQUEST 并等待响应。
+ * 始终走 WebSocket — NM stdin/stdout 仅用于 Chrome 生命周期管理。
  */
 function sendToExtension(taskId, action, payload = {}) {
   return new Promise((resolve, reject) => {
@@ -224,9 +226,11 @@ function handleSseConnection(req, res) {
 
   if (req.url === '/health' && req.method === 'GET') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
+    const extConnected = extensionWs !== null;
     res.end(JSON.stringify({
       status: state,
-      extensionConnected: extensionWs !== null,
+      extensionConnected: extConnected,
+      lifecycle: nmLifecycle ? 'native_messaging' : 'standalone',
       pendingRequests: pendingRequests.size,
       sseConnected: sseTransport !== null,
     }));
@@ -257,6 +261,7 @@ function setupWebSocket(server) {
     if (role === 'extension') {
       extensionWs = ws;
       console.error('[NativeHost] Extension connected via WebSocket');
+      transition(State.RUNNING);
 
       ws.on('message', (raw) => {
         let msg;
@@ -287,6 +292,13 @@ function setupWebSocket(server) {
       ws.on('close', () => {
         extensionWs = null;
         console.error('[NativeHost] Extension WebSocket disconnected');
+        if (state === State.RUNNING) {
+          transition(State.DEGRADED);
+          degradedTimer = setTimeout(() => {
+            console.error('[NativeHost] Degraded timeout — exiting');
+            shutdown();
+          }, DEGRADED_EXIT_MS);
+        }
       });
     } else {
       // Agent 通道：JSON-RPC 2.0 + 旧协议 AGENT_REQUEST 兼容
@@ -460,10 +472,31 @@ async function main() {
     }
   });
 
-  // ── Native Messaging stdin/stdout（方案二：Chrome 自动拉起 + 生命周期）──
+  // ── Native Messaging stdin/stdout（纯生命周期：仅握手/心跳，不传输业务数据）──
+  // 协议：4 字节 LE 长度前缀 + JSON 报文，支持粘包/半包处理
+  // 所有日志输出必须走 stderr，stdout 仅供 NM 协议报文使用
+  // 架构：NM 管进程生死，WebSocket 管海量数据（因 NM 有 1MB 单条消息硬限制）
   let nmBuffer = Buffer.alloc(0);
   let nmReading = false;
   let nmExpectedLen = 0;
+
+  function processNmMessage(msg) {
+    if (!msg) return;
+
+    // ping → pong（Chrome NM 保活探测，唯一允许的 NM 消息类型）
+    // 所有业务数据（AGENT_REQUEST/RESPONSE、JSON-RPC）走 WebSocket :9527
+    if (msg.type === 'ping') {
+      const pong = JSON.stringify({ type: 'pong', status: 'ok' });
+      const pongBuf = Buffer.from(pong, 'utf-8');
+      const header = Buffer.alloc(4);
+      header.writeUInt32LE(pongBuf.length, 0);
+      process.stdout.write(Buffer.concat([header, pongBuf]));
+      return;
+    }
+
+    // 其他消息类型一律忽略 — 业务数据走 WebSocket
+    console.error(`[NativeHost] NM ignored unsupported message type: ${msg.type || 'unknown'}`);
+  }
 
   process.stdin.on('data', (chunk) => {
     nmBuffer = Buffer.concat([nmBuffer, chunk]);
@@ -483,28 +516,24 @@ async function main() {
         }
         nmBuffer = nmBuffer.slice(nmExpectedLen);
         nmReading = false;
-
-        if (msg?.type === 'ping') {
-          const pong = Buffer.from(JSON.stringify({ type: 'pong', status: 'ok' }), 'utf-8');
-          const header = Buffer.alloc(4);
-          header.writeUInt32LE(pong.length, 0);
-          process.stdout.write(Buffer.concat([header, pong]));
-        }
+        processNmMessage(msg);
       } else {
+        // 半包：等待更多数据
         break;
       }
     }
   });
 
   // stdin 关闭 → Chrome 断开 Native Messaging → 退出进程
-  // 仅在 Native Messaging 模式下生效（--nm 参数）
   if (process.argv.includes('--nm')) {
+    nmLifecycle = true;
+    console.error('[NativeHost] NM lifecycle mode — Chrome manages process (--nm)');
     process.stdin.on('end', () => {
       console.error('[NativeHost] stdin closed (Chrome disconnected) — shutting down');
       shutdown();
     });
   } else {
-    // 独立模式：stdin 可能已被管道关闭，忽略
+    // 独立模式：stdin 关闭不退出（用户可能 Ctrl+C 或管道关闭）
     process.stdin.on('end', () => {
       console.error('[NativeHost] stdin closed (standalone, ignoring)');
     });

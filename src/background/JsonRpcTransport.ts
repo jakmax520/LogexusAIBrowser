@@ -1,12 +1,17 @@
 // ── Logexus AI Browser — JSON-RPC 2.0 传输层 ──
 // 封装 WebSocket 生命周期 + JSON-RPC 2.0 + MV3 保活 + 断线重连
 //
+// 架构：NM 管进程生死，WebSocket 管海量数据
+//   Native Messaging 有单条消息 1MB 硬限制（Chrome/Edge），不适合大文本/Base64/流式。
+//   NM 仅用于 Chrome 自动拉起/关闭 Host 进程（生命周期），所有 JSON-RPC 走 WebSocket。
+//   Extension → connectNative() 拉起 host.js --nm → WS :9527 传输数据。
+//
 // 保活三角：
 //   1. chrome.alarms 每 15s — 防止 SW 被 Chrome 回收
 //   2. chrome.runtime.getPlatformInfo() 每 20s — 重置 30s 空闲倒计时
 //   3. WebSocket system.ping 每 20s — 检测 TCP 连接存活
 //
-// 重连：指数退避 1s→2s→4s→8s→16s→30s(cap)，成功后重置
+// 重连：指数退避 1s→2s→4s→8s→16s→30s(cap)，同一时刻最多一个定时器
 
 import {
   parseJsonRpc,
@@ -58,6 +63,8 @@ export class JsonRpcTransport {
   private legacyHandler: LegacyCommandHandler | null = null;
   private agentReqHandler: AgentRequestHandler | null = null;
   private keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connecting = false;
   private backoff = 0;
   private sessionId: string;
   private onConnectionChange: ConnectionChangeCallback | null = null;
@@ -138,10 +145,13 @@ export class JsonRpcTransport {
 
   /** 建立 WebSocket 连接 + 启动保活 */
   async connect(): Promise<void> {
+    // 已连接或正在连接中 → 跳过
+    if (this.ws?.readyState === WebSocket.OPEN || this.connecting) return;
+
+    this.connecting = true;
+
     // 尝试恢复 session
     await this.restoreSessionId();
-
-    if (this.ws?.readyState === WebSocket.OPEN) return;
 
     try {
       const clientId = `ext_${this.sessionId}`;
@@ -151,6 +161,7 @@ export class JsonRpcTransport {
 
       this.ws.onopen = () => {
         console.log('[SW] JSON-RPC transport connected');
+        this.connecting = false;
         this.backoff = 0;
         this.startKeepAlive();
         this.registerWithDaemon();
@@ -163,15 +174,18 @@ export class JsonRpcTransport {
 
       this.ws.onclose = () => {
         console.log('[SW] JSON-RPC transport closed');
+        this.connecting = false;
         this.cleanup();
         this.onConnectionChange?.(false);
         this.scheduleReconnect();
       };
 
       this.ws.onerror = () => {
+        // onerror 后通常紧跟着 onclose，不要在 onerror 里重置 connecting
         console.warn('[SW] JSON-RPC transport: daemon unreachable, will retry...');
       };
     } catch {
+      this.connecting = false;
       this.scheduleReconnect();
     }
   }
@@ -254,10 +268,15 @@ export class JsonRpcTransport {
     }
   }
 
-  private sendResponse(res: JsonRpcSuccess | JsonRpcError): void {
+  /** 统一的底层发送 */
+  private sendRaw(raw: string): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(res));
+      this.ws.send(raw);
     }
+  }
+
+  private sendResponse(res: JsonRpcSuccess | JsonRpcError): void {
+    this.sendRaw(JSON.stringify(res));
   }
 
   /** 兼容旧协议消息（daemon 使用 type 字段的消息） */
@@ -272,10 +291,10 @@ export class JsonRpcTransport {
       if (obj.type === 'AGENT_REQUEST' && this.agentReqHandler) {
         this.agentReqHandler(obj)
           .then((response) => {
-            this.ws?.send(JSON.stringify(response));
+            this.sendRaw(JSON.stringify(response));
           })
           .catch((err) => {
-            this.ws?.send(
+            this.sendRaw(
               JSON.stringify({
                 type: 'AGENT_RESPONSE',
                 task_id: obj.task_id as string,
@@ -306,7 +325,7 @@ export class JsonRpcTransport {
         // 回调即代表 API 调用成功，SW 空闲计时器已重置
       });
 
-      // WebSocket 层心跳
+      // WebSocket 层心跳（NM 模式下跳过 — 端口自带生命周期管理）
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ jsonrpc: '2.0', method: METHOD_SYSTEM_PING, id: `ping_${Date.now()}` }));
       }
@@ -318,19 +337,32 @@ export class JsonRpcTransport {
   // ═══════════════════════════════════════════
 
   private scheduleReconnect(): void {
+    // 清除已有定时器，确保同一时刻只有一个重连在排队
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+
     const delay = Math.min(
       RECONNECT_BASE_MS * Math.pow(2, this.backoff),
       RECONNECT_CAP_MS
     );
     this.backoff++;
     console.log(`[SW] JSON-RPC reconnect in ${delay}ms (attempt ${this.backoff})`);
-    setTimeout(() => this.connect(), delay);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, delay);
   }
 
   private cleanup(): void {
     if (this.keepAliveTimer) {
       clearInterval(this.keepAliveTimer);
       this.keepAliveTimer = null;
+    }
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
     }
     // 不移除 alarm — SW 重启后 alarm 仍需要触发来唤醒 SW
   }

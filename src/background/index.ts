@@ -47,7 +47,6 @@ const uiPorts = new Set<chrome.runtime.Port>();
 let auditIdCounter = 0;
 let authRequired = true;
 let sessionAuthorized = false;
-let nmPort: chrome.runtime.Port | null = null;
 const logexusGroupIds = new Map<number, number>(); // windowId → groupId
 
 // 从 chrome.storage 加载 LOGEXUS_SKIP_AUTH 开关
@@ -802,28 +801,35 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 // ── 启动 ──
 console.log('[SW] Starting Logexus AI Browser v0.2.0...');
 
-// ── Native Host 自动拉起（备选）──
-// 主方案：Windows 开机自启 (native-host/start-silent.vbs)
-// 备选：Chrome Native Messaging 自动拉起（需注册表 + Chrome 完全重启后生效）
-async function launchNativeHost(): Promise<void> {
+// ── 传输层初始化 ──
+// 架构：NM 管进程生死，WebSocket 管海量数据，因 NM 单条消息有 1MB 硬限制
+//   Step 1: chrome.runtime.connectNative() → Chrome 自动拉起 host.js --nm
+//   Step 2: WebSocket :9527 连接 host 传输所有 JSON-RPC 数据
+//   Step 3: NM 断开时 Chrome 自动 SIGTERM → host.js 优雅退出
+//
+// 若 NM 不可用（manifest 未部署 / Chrome 未完全重启），需手动启动 Host
+function initTransport(): void {
+  // 1. 尝试 NM 生命周期 — 让 Chrome 自动拉起/关闭 host.js
   try {
-    nmPort = chrome.runtime.connectNative('com.logexus.browser.host');
+    const nmPort = chrome.runtime.connectNative('com.logexus.browser.host');
+    console.log('[SW] Native Host lifecycle via NM — Chrome manages process');
     nmPort.onDisconnect.addListener(() => {
       const err = chrome.runtime.lastError?.message;
-      if (err) {
-        // Chrome 未重启时注册表不生效，属正常现象，AutoStart 已覆盖
-        console.debug('[SW] Native Messaging not available (expected if Chrome not restarted)');
-      }
+      console.debug('[SW] NM lifecycle port closed' + (err ? ` (${err})` : '') + ' — host will exit');
     });
-  } catch {
-    // 未注册，静默跳过 — Windows AutoStart 已覆盖
+  } catch (err) {
+    console.debug('[SW] NM unavailable — start host manually: cd native-host && node host.js');
+    if (err instanceof Error) {
+      console.debug('[SW] NM error:', err.message);
+    }
   }
+
+  // 2. WebSocket 连接 Host（数据通道），指数退避自动重连
+  transport.connect();
 }
 
 // 首次启动默认跳过授权（LOGEXUS_SKIP_AUTH = ON），用户可通过 Side Panel 或消息关闭
 loadSkipAuth();
 
-// 先拉起 Native Host，等它就绪后再连接 WebSocket
-launchNativeHost();
-transport.connect();
+initTransport();
 activateCurrentTab();
