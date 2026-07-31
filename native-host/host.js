@@ -495,6 +495,12 @@ async function main() {
     }
   });
 
+  // stdin 关闭 → Chrome 断开 Native Messaging → 退出进程
+  process.stdin.on('end', () => {
+    console.error('[NativeHost] stdin closed (Chrome disconnected) — shutting down');
+    shutdown();
+  });
+
   // 进程退出时的清理
   process.on('SIGINT', () => shutdown());
   process.on('SIGTERM', () => shutdown());

@@ -47,6 +47,7 @@ const uiPorts = new Set<chrome.runtime.Port>();
 let auditIdCounter = 0;
 let authRequired = true;
 let sessionAuthorized = false;
+let nmPort: chrome.runtime.Port | null = null;
 const logexusGroupIds = new Map<number, number>(); // windowId → groupId
 
 // 从 chrome.storage 加载 LOGEXUS_SKIP_AUTH 开关
@@ -801,16 +802,28 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 // ── 启动 ──
 console.log('[SW] Starting Logexus AI Browser v0.2.0...');
 
-// ── Native Host 自动拉起（方案二，需 Chrome 完全重启后生效）──
-// 生效条件：HKCU\Software\Google\Chrome\NativeMessagingHosts\com.logexus.browser.host 注册表已配置
-// 若报 "Specified native messaging host not found"，重启 Chrome 即可
-// 在注册表生效前，手动运行 node native-host/host.js 启动 Native Host
-// try {
-//   chrome.runtime.connectNative('com.logexus.browser.host');
-// } catch (_) { /* 未注册时静默跳过 */ }
+// ── Native Host 自动拉起（备选）──
+// 主方案：Windows 开机自启 (native-host/start-silent.vbs)
+// 备选：Chrome Native Messaging 自动拉起（需注册表 + Chrome 完全重启后生效）
+async function launchNativeHost(): Promise<void> {
+  try {
+    nmPort = chrome.runtime.connectNative('com.logexus.browser.host');
+    nmPort.onDisconnect.addListener(() => {
+      const err = chrome.runtime.lastError?.message;
+      if (err) {
+        // Chrome 未重启时注册表不生效，属正常现象，AutoStart 已覆盖
+        console.debug('[SW] Native Messaging not available (expected if Chrome not restarted)');
+      }
+    });
+  } catch {
+    // 未注册，静默跳过 — Windows AutoStart 已覆盖
+  }
+}
 
 // 首次启动默认跳过授权（LOGEXUS_SKIP_AUTH = ON），用户可通过 Side Panel 或消息关闭
 loadSkipAuth();
 
+// 先拉起 Native Host，等它就绪后再连接 WebSocket
+launchNativeHost();
 transport.connect();
 activateCurrentTab();
