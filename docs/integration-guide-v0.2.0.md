@@ -64,9 +64,24 @@ node D:\CCWorkSpace\LogexusAIBrowser\native-host\host.js
 
 按 `Ctrl+C` 退出。
 
-### 2.2 Chrome 自动拉起
+### 2.2 Windows 开机自启（v0.2.1+）
 
-通过 `install.bat` 注册 Native Messaging Host 后，Chrome 会在扩展首次调用 `chrome.runtime.connectNative()` 时自动启动 Native Host。（当前版本扩展仍走 WebSocket 手动连接，自动拉起为后续优化方向。）
+**主方案**：注册 Windows 开机自启。
+
+```powershell
+# 注册自启（仅需一次）
+native-host\install-autostart.bat
+
+# 或手动注册
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Run" ^
+    /v "LogexusNativeHost" /d "\"D:\CCWorkSpace\LogexusAIBrowser\native-host\start-silent.vbs\"" /f
+```
+
+Native Host 会在 Windows 登录时通过 VBS 脚本在后台静默启动，无需命令行窗口。
+
+**备选方案**：Chrome Native Messaging 自动拉起。通过 `install.bat` 注册后，Chrome 在扩展调用 `chrome.runtime.connectNative()` 时自动启动 Native Host。需 Chrome 完全重启后生效。
+
+> 详细设计见 [auto-start-design.md](auto-start-design.md)。
 
 ### 2.3 健康检查
 
