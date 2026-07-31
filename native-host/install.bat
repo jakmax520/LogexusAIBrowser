@@ -16,9 +16,9 @@ set HOST_DIR=%~dp0
 set HOST_PATH=%HOST_DIR%host.bat
 set MANIFEST_PATH=%HOST_DIR%com.logexus.browser.host.json
 
-REM 生成 host.bat（启动 Node.js）
+REM 生成 host.bat（启动 Node.js，--nm 启用 Native Messaging 生命周期）
 echo @echo off > "%HOST_PATH%"
-echo node "%HOST_DIR%host.js" >> "%HOST_PATH%"
+echo node "%HOST_DIR%host.js" --nm >> "%HOST_PATH%"
 
 REM 生成 host manifest JSON
 REM 注意：路径中的反斜杠需要转义为双反斜杠

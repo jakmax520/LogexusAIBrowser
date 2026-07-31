@@ -317,6 +317,7 @@ function setupWebSocket(server) {
             target_id: params.elementId || params.target_id || params.index || '',
             value: params.text || params.value || (params.url || ''),
             reasoning: `WebSocket RPC: ${msg.method}`,
+            __auth_approved: params.__auth_approved,
           };
 
           sendToExtension(taskId, action, payload)
@@ -496,10 +497,19 @@ async function main() {
   });
 
   // stdin 关闭 → Chrome 断开 Native Messaging → 退出进程
-  process.stdin.on('end', () => {
-    console.error('[NativeHost] stdin closed (Chrome disconnected) — shutting down');
-    shutdown();
-  });
+  // 仅在 Native Messaging 模式下生效（--nm 参数）
+  if (process.argv.includes('--nm')) {
+    process.stdin.on('end', () => {
+      console.error('[NativeHost] stdin closed (Chrome disconnected) — shutting down');
+      shutdown();
+    });
+  } else {
+    // 独立模式：stdin 可能已被管道关闭，忽略
+    process.stdin.on('end', () => {
+      console.error('[NativeHost] stdin closed (standalone, ignoring)');
+    });
+    process.stdin.resume();
+  }
 
   // 进程退出时的清理
   process.on('SIGINT', () => shutdown());
