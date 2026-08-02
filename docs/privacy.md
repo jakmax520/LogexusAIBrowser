@@ -8,7 +8,7 @@ Logexus AI Browser **does not collect, transmit, or store any user data on exter
 
 All data processing occurs exclusively on the user's local machine:
 
-- **Page DOM data**: Extracted and structured locally in the Content Script. Only interactive elements are extracted (≤80 elements). This data is sent only to the user-configured AI Agent via local WebSocket (127.0.0.1:9527).
+- **Page DOM data**: Extracted and structured locally in the Content Script. Only interactive elements are extracted (≤150 elements). This data is sent only to the user-configured AI Agent via the local Native Host at 127.0.0.1:9527.
 - **Screenshots**: Captured only on user request or when an action fails. Stored temporarily in memory and returned to the calling AI Agent. Never persisted to disk or uploaded.
 - **Browser session data**: The extension reuses existing browser cookies and sessions. No passwords or credentials are stored.
 - **Audit logs**: Stored locally in the browser's IndexedDB. Never transmitted externally. User can export logs as JSON at any time.
@@ -24,9 +24,9 @@ All data processing occurs exclusively on the user's local machine:
 | `nativeMessaging` | Enable external applications to communicate with the extension via Chrome's secure Native Messaging API |
 | `host_permissions: <all_urls>` | Execute automation on any website the user navigates to |
 
-## WebSocket Communication
+## Local Communication
 
-The extension connects to a local WebSocket daemon at `ws://127.0.0.1:9527`. This daemon runs on the user's own machine and never communicates with external servers. Authentication is via a user-configurable token.
+The extension communicates with external AI Agents through a local Native Host process (single Node.js process) that exposes WebSocket (`ws://127.0.0.1:9527`), MCP SSE (`http://127.0.0.1:9527/sse`), and HTTP API endpoints. This Native Host runs on the user's own machine and never communicates with external servers. Authentication is via a user-configurable token.
 
 ## Third-Party Services
 

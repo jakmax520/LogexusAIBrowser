@@ -10,11 +10,11 @@
 4. 打开目标测试页面：`https://www.bing.com`
 5. 新 Tab 打开 `dist/test-agent.html`，填入扩展 ID，点击连接
 
-### Daemon 模式前置（JSON-RPC 2.0 测试用）
+### Native Host 模式前置（JSON-RPC 2.0 / MCP SSE 测试用）
 
 ```bash
-cd daemon && npm install && node server.js
-# Daemon 启动在 ws://127.0.0.1:9527，健康检查 http://127.0.0.1:9528
+cd native-host && npm install && node host.js
+# Native Host 启动在 http://127.0.0.1:9527，健康检查 http://127.0.0.1:9527/health
 ```
 
 ---
@@ -33,7 +33,7 @@ cd daemon && npm install && node server.js
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | 扩展已加载，Daemon 已启动 |
+| **前置** | 扩展已加载，Native Host 已启动 |
 | **步骤** | 1. 运行 `python scripts/verify-ws.py`<br>2. 观察输出 |
 | **期望** | (1) WebSocket 连接成功<br>(2) system.ping 返回 pong<br>(3) 无扩展连接时返回 error（"No extension connected"） |
 
@@ -41,7 +41,7 @@ cd daemon && npm install && node server.js
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | Daemon 已启动，扩展已连接 |
+| **前置** | Native Host 已启动，扩展已连接 |
 | **步骤** | 1. 通过 WebSocket 发送 `{"jsonrpc":"2.0","method":"system.ping","id":"1"}`<br>2. 等待响应 |
 | **期望** | 返回 `{"jsonrpc":"2.0","result":{"pong":true,...},"id":"1"}` |
 
@@ -49,7 +49,7 @@ cd daemon && npm install && node server.js
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | Daemon 已启动 |
+| **前置** | Native Host 已启动 |
 | **步骤** | 1. 通过 WebSocket 发送 `{"jsonrpc":"2.0","method":"system.register","params":{"role":"agent"},"id":"1"}`<br>2. 等待响应 |
 | **期望** | 返回注册成功确认，包含 sessionId |
 
@@ -57,7 +57,7 @@ cd daemon && npm install && node server.js
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | Daemon 已启动 |
+| **前置** | Native Host 已启动 |
 | **步骤** | 1. 发送 `{"jsonrpc":"2.0","method":"invalid.method","id":"1"}` |
 | **期望** | 返回错误码 `-32601` (METHOD_NOT_FOUND) |
 
@@ -145,7 +145,7 @@ cd daemon && npm install && node server.js
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | Daemon 已启动，扩展已连接，已打开 Bing |
+| **前置** | Native Host 已启动，扩展已连接，已打开 Bing |
 | **步骤** | 1. 通过 WebSocket 发送 `{"jsonrpc":"2.0","method":"browser.get_context","id":"1"}`<br>2. 查看响应 |
 | **期望** | 返回 `result.url`、`result.title`、`result.elements` 数组；elements 中每个元素含 id/tag/text/inViewport |
 
@@ -177,7 +177,7 @@ cd daemon && npm install && node server.js
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | Daemon 已启动 |
+| **前置** | Native Host 已启动 |
 | **步骤** | 1. 发送 `{"jsonrpc":"2.0","method":"browser.navigate","params":{"url":"https://www.google.com"},"id":"1"}` |
 | **期望** | 返回 success=true + newUrl；浏览器跳转到 Google；15s 内完成页面加载 |
 
@@ -497,7 +497,7 @@ cd daemon && npm install && node server.js
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | Daemon 已启动，扩展已连接 |
+| **前置** | Native Host 已启动，扩展已连接 |
 | **步骤** | 1. 运行 `python scripts/test_jd.py`<br>2. 观察输出 |
 | **期望** | 所有步骤通过：navigate → get_context → click → input → get_context → click → 结果验证 |
 
@@ -505,7 +505,7 @@ cd daemon && npm install && node server.js
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | Daemon 已启动 |
+| **前置** | Native Host 已启动 |
 | **步骤** | 1. 运行 `python scripts/verify-ws.py` |
 | **期望** | 3 步全部通过：连接成功、ping/pong 正常、无扩展时返回错误 |
 
@@ -513,7 +513,7 @@ cd daemon && npm install && node server.js
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | Daemon 已启动，扩展已连接，活跃页面可交互 |
+| **前置** | Native Host 已启动，扩展已连接，活跃页面可交互 |
 | **步骤** | 1. 将 `scripts/stress-test.ts` 中的脚本粘贴到浏览器 Console<br>2. 观察执行过程 |
 | **期望** | 50 步交替 observe/click/scroll 全部完成；无超时或断连；输出通过/失败计数和平均响应时间 |
 
@@ -521,17 +521,17 @@ cd daemon && npm install && node server.js
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | Daemon 已启动，扩展已连接 |
+| **前置** | Native Host 已启动，扩展已连接 |
 | **步骤** | 1. 手动停止 Daemon 进程<br>2. 等待 10 秒<br>3. 重启 Daemon<br>4. 观察扩展行为 |
 | **期望** | Daemon 停止后扩展进入重连循环（1s→2s→4s→...→30s）；Daemon 重启后自动重连成功 |
 
-### TC-94：MCP Wrapper 工具列表
+### TC-94：Native Host MCP 工具列表
 
 | 项 | 内容 |
 |:--|:--|
-| **前置** | Daemon 已启动，MCP Wrapper 已配置 |
+| **前置** | Native Host 已启动，Claude Code 已配置 MCP (`http://127.0.0.1:9527/sse`) |
 | **步骤** | 1. 在 Claude Code 中查看可用 MCP 工具<br>2. 尝试调用 `observe` 工具 |
-| **期望** | 可用工具列表包含 14 个工具：observe, click, type, navigate, extract, scroll, screenshot, evaluate, network_start, network_stop, console_start, console_stop, perf_start, perf_stop |
+| **期望** | 可用工具列表包含 13 个工具：observe, click, type, navigate, extract, scroll, screenshot, evaluate, extract_network_apis, get_auth_cookies, screenshot_fullpage, export_pdf, get_storage<br>（不含 network_start/stop, console_start/stop, perf_start/stop — 已降噪隐藏） |
 
 ---
 
@@ -756,3 +756,90 @@ cd daemon && npm install && node server.js
 | Logexus Tauri WebSocket | ✅ 通过 | `browser.rs` JSON-RPC 2.0 零改动兼容 |
 
 > 测试通过标记 ✅，失败标记 ❌ 并备注原因
+
+---
+
+## 十三、v0.2.1 自动启动与 NM 模式测试
+
+> 前置：Native Host 已安装（`install.bat` / `install.sh`），Chrome Extension 已加载
+
+### TC-300：Native Host 独立模式启动
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | Native Host 依赖已安装 |
+| **步骤** | 1. `node native-host/host.js`<br>2. 观察日志输出<br>3. 按 Ctrl+C 退出 |
+| **期望** | 日志输出 `[NativeHost] INIT → STARTING` + `HTTP+WS on http://127.0.0.1:9527`；Ctrl+C 正常退出，不出现 stdin 关闭导致的意外 shutdown |
+
+### TC-301：Native Host --nm 模式启动
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | Native Host 依赖已安装 |
+| **步骤** | 1. `node native-host/host.js --nm`<br>2. 按 Ctrl+C 发送 stdin end |
+| **期望** | 日志输出 `[NativeHost] stdin closed by Chrome` → 自动进入 DRAINING → EXITED |
+
+### TC-302：Native Host 健康检查
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | Native Host 已启动（独立模式） |
+| **步骤** | 1. `curl -s http://127.0.0.1:9527/health`<br>2. 检查返回字段 |
+| **期望** | 返回 `{"status":"STARTING"\|"RUNNING"\|"DEGRADED","extensionConnected":true/false,"pendingRequests":0,"sseConnected":false}` |
+
+### TC-303：Chrome NM 自动拉起（备选方案）
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | `install.bat` 已执行，Chrome 已完全重启 |
+| **步骤** | 1. 打开 Side Panel<br>2. 观察连接状态<br>3. 检查 `health` 端点 |
+| **期望** | Side Panel 状态灯绿色；`extensionConnected:true`；Native Host 通过 `--nm` 模式运行 |
+
+### TC-304：独立模式 stdin 关闭不退出
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | 独立模式启动（无 `--nm` 参数） |
+| **步骤** | 1. 启动 Native Host<br>2. 在另一个终端发送 Ctrl+C 信号模拟 stdin 关闭<br>3. 检查进程是否存活 |
+| **期望** | 进程**不退出**（独立模式忽略 stdin 关闭）；WebSocket 服务保持可用 |
+
+### TC-305：NM 模式 stdin 关闭自动退出
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | `--nm` 模式启动 |
+| **步骤** | 1. 启动 Native Host `--nm`<br>2. 关闭 stdin（模拟 Chrome 断开） |
+| **期望** | 进程自动进入 DRAINING → EXITED 并退出 |
+
+### TC-306：`__auth_approved` 透传
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | Native Host 已启动，Extension 已连接，`LOGEXUS_SKIP_AUTH=OFF` |
+| **步骤** | 1. 发送 JSON-RPC `browser.navigate` 不带 `__auth_approved`<br>2. 观察返回<br>3. 重发带 `__auth_approved: true` |
+| **期望** | 第一次返回 `auth_required`；第二次返回 `success`；AGENT_REQUEST 的 payload 中包含 `__auth_approved: true` |
+
+### TC-307：macOS host.sh NM 入口（macOS 专用）
+
+| 项 | 内容 |
+|:--|:--|
+| **前置** | macOS 环境，`install.sh` 已执行 |
+| **步骤** | 1. 重启 Chrome<br>2. 打开 Side Panel 检查连接 |
+| **期望** | Native Host 通过 `host.sh` 以 `--nm` 模式启动；连接正常 |
+
+---
+
+## 测试结果记录 v0.2.1
+
+### 自动启动与 NM 模式
+
+| 用例 | 状态 | 备注 |
+|:--|:--|:--|
+| TC-300 独立模式启动 | ⬜ 待测 | |
+| TC-301 --nm 模式 | ⬜ 待测 | |
+| TC-302 健康检查 | ⬜ 待测 | |
+| TC-303 NM 自动拉起 | ⬜ 待测 | |
+| TC-304 独立模式 stdin 不退出 | ⬜ 待测 | |
+| TC-305 NM 模式自动退出 | ⬜ 待测 | |
+| TC-306 __auth_approved 透传 | ⬜ 待测 | |
+| TC-307 macOS host.sh | ⬜ 待测 |

@@ -1,7 +1,7 @@
 # Logexus AI Browser v0.2.0 — 对接文档
 
-**版本**: v0.2.0
-**更新**: 2026-07-30
+**版本**: v0.2.1
+**更新**: 2026-08-01
 
 ---
 
@@ -83,7 +83,25 @@ Native Host 会在 Windows 登录时通过 VBS 脚本在后台静默启动，无
 
 > 详细设计见 [auto-start-design.md](auto-start-design.md)。
 
-### 2.3 健康检查
+### 2.3 macOS 开机自启（v0.2.1+）
+
+```bash
+# 注册 NM Host
+cd native-host && chmod +x install.sh && ./install.sh <你的扩展ID>
+
+# macOS LaunchAgent（可选）
+# 创建 ~/Library/LaunchAgents/com.logexus.browser.host.plist
+# 详见 docs/auto-start-design.md
+```
+
+### 2.4 运行模式说明
+
+| 模式 | 启动方式 | 参数 | stdin 关闭行为 | 适用场景 |
+|:--|:--|:--|:--|:--|
+| **独立模式** | VBS / 手动 `node host.js` | 无 | 忽略，进程继续运行 | Windows 开机自启、手动调试 |
+| **NM 模式** | Chrome 通过 `host.bat`/`host.sh` 拉起 | `--nm` | 自动退出 | Chrome NM 备选拉起 |
+
+### 2.5 健康检查
 
 ```powershell
 curl -s http://127.0.0.1:9527/health

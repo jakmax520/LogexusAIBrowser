@@ -15,6 +15,7 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 - **状态采集器**：DOM 降噪、页面结构化、CDP 深度检测
 
 **v0.2.0 架构演进**：废弃独立 Daemon 和 MCP Wrapper，统一为**单进程 Native Host**，同时暴露 WebSocket、MCP SSE、HTTP API 三种协议。
+**v0.2.1 增强**：Windows 开机自启（主方案）+ Chrome Native Messaging 自动拉起（备选），`__auth_approved` JSON-RPC 透传修复，`--nm` 运行模式区分，macOS `host.sh` 支持。
 
 ```
 外部 AI Agent (Claude Code / Cursor / Python 脚本 / Logexus Tauri)
@@ -28,10 +29,11 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 │            Native Host (Node.js 单进程)                │
 │  ┌─────────────────────────────────────────────────┐  │
 │  │  MCP SSE Server (13 个 Tools，含 5 语义 Tool)    │  │
-│  │  WebSocket Server (JSON-RPC 2.0 + AGENT_REQUEST) │  │
+│  │  WebSocket Server (Extension 业务通信)            │  │
 │  │  File Offloader (>10KB 自动落盘)                  │  │
 │  └──────────────┬──────────────────────────────────┘  │
 │                 │ WebSocket (127.0.0.1:9527)           │
+│                 │ Native Messaging (stdin/stdout)      │
 └─────────────────┼─────────────────────────────────────┘
                   │
 ┌─────────────────▼─────────────────────────────────────┐
@@ -93,7 +95,7 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 | 截图策略 | 按需触发（截图是独立 action） | 由外部 Agent 决定何时截图，扩展不自动决策 |
 | LLM Provider | 不内置 | 由外部 Agent 自行选择 LLM（OpenAI/Anthropic/Ollama 等） |
 | UI 风格 | 富交互面板 + 暗色模式 | 折叠卡片 + 状态灯 + 中文标签，消除"黑盒效应" |
-| 传输层 | Native Messaging（自动拉起）+ WebSocket（业务通信） | Native Messaging 管理进程生命周期；WebSocket 承载所有业务数据 |
+| 传输层 | Native Messaging（生命周期管理）+ WebSocket（业务通信，v0.2.1 重构） | NM 管理进程启动/退出；WebSocket 承载 Extension ↔ Native Host 全部业务数据 |
 
 ---
 
@@ -107,9 +109,9 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 ├──────────────────────────────────────────────────────────┤
 │  协议层: JSON-RPC 2.0 / AGENT_REQUEST (旧版兼容)          │
 ├──────────────────────────────────────────────────────────┤
-│  传输层: WebSocket (Daemon :9527) / chrome.runtime API   │
+│  传输层: WebSocket (Native Host :9527) / Native Messaging / chrome.runtime API │
 ├──────────────────────────────────────────────────────────┤
-│  网关层: Service Worker — 路由、授权、审计、CDP           │
+│  网关层: Service Worker — 路由、授权、审计、CDP、NM 生命周期 │
 ├──────────────────────────────────────────────────────────┤
 │  执行层: Content Script — DOM操作、元素索引、动作执行      │
 ├──────────────────────────────────────────────────────────┤
@@ -121,8 +123,8 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 
 | 方向 | 路径 | 协议 |
 |:--|:--|:--|
-| **下行（指令）** | 外部 Agent → Daemon WebSocket → Service Worker → Content Script | JSON-RPC 2.0 或 AGENT_REQUEST |
-| **上行（结果）** | Content Script → Service Worker → Daemon WebSocket → 外部 Agent | JSON-RPC 2.0 或 AGENT_RESPONSE |
+| **下行（指令）** | 外部 Agent → Native Host → Service Worker → Content Script | JSON-RPC 2.0 或 AGENT_REQUEST |
+| **上行（结果）** | Content Script → Service Worker → Native Host → 外部 Agent | JSON-RPC 2.0 或 AGENT_RESPONSE |
 | **UI 推送** | Service Worker → Side Panel (chrome.runtime.connect) | 内部消息 |
 
 ### 3.3 通信协议
@@ -204,8 +206,9 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 
 | 模块 | 文件 | 职责 |
 |:--|:--|:--|
-| SW 入口 | `src/background/index.ts` | 消息路由、安全授权、审计记录、标签页管理、CDP 调度 |
+| SW 入口 | `src/background/index.ts` | 消息路由、安全授权、审计记录、标签页管理、CDP 调度、NM 生命周期 |
 | JSON-RPC 传输 | `src/background/JsonRpcTransport.ts` | WebSocket 生命周期、指数退避重连、MV3 保活三角 |
+| NM 传输 | `src/background/NativeTransport.ts` | Native Messaging 生命周期管理、`--nm` 模式区分、启动协调（v0.2.1 新增） |
 | CDP 引擎 | `src/background/CDPEngine.ts` | JS 执行、网络抓包、控制台捕获、性能追踪 |
 | 宏引擎 | `src/background/MacroEngine.ts` | 操作录制与回放，chrome.storage.local 持久化 |
 | JSON-RPC 协议 | `src/shared/jsonrpc.ts` | 类型定义、错误码、编解码工具函数 |
@@ -227,21 +230,26 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 
 | 组件 | 文件 | 说明 |
 |:--|:--|:--|
-| **Native Host** | `native-host/host.js` | **单进程网关 v0.2.0**：HTTP+WS on :9527，MCP SSE Server，JSON-RPC 2.0 转发，Native Messaging 生命周期 |
+| **Native Host** | `native-host/host.js` | **单进程网关 v0.2.1**：HTTP+WS on :9527，MCP SSE Server，JSON-RPC 2.0 转发，NM 生命周期，`--nm` 模式区分 |
+| **NM 启动入口** | `native-host/host.bat` | Windows Chrome NM 拉起入口（`node host.js --nm`） |
+| **macOS 启动** | `native-host/host.sh` | macOS Chrome NM 拉起入口（v0.2.1 新增） |
+| **静默启动** | `native-host/start-silent.vbs` | VBS 静默启动脚本（无命令行窗口） |
+| **自动启动注册** | `native-host/install-autostart.bat` | 注册 Windows 开机自启（v0.2.1 新增） |
 | **文件卸载** | `native-host/file-offloader.js` | 大体积数据 >10KB 写入 %TEMP%/logexus/，TTL 自动清理 |
 | **工具注册表** | `native-host/tools/tools-registry.js` | 13 个可见 Tool（7 基础 + evaluate + 5 语义），6 个隐藏 CDP 裸工具 |
 | **语义工具** | `native-host/tools/semantic/*.js` | extract_network_apis, get_auth_cookies, screenshot_fullpage, export_pdf, get_storage |
+| **NM 安装** | `native-host/install.bat` / `install.sh` | 注册 Native Messaging Host（Windows / macOS） |
 | **测试控制台** | `public/test-agent.html` | 浏览器端手动测试工具，支持所有 action |
 | **集成测试** | `scripts/test_jd.py` | Python 脚本，京东搜索端到端 JSON-RPC 流程 |
 | **连接验证** | `scripts/verify-ws.py` | WebSocket 连接验证 |
 | **压力测试** | `scripts/stress-test.ts` | 50 步压力测试脚本 |
 
-**已废弃（v0.2.0 删除）**：
+**已废弃（v0.2.0+ 不再使用）**：
 
-| 组件 | 原因 |
+| 组件 | 状态 |
 |:--|:--|
-| `daemon/server.js` | 路由逻辑合并入 Native Host |
-| `mcp-wrapper/server.js` | MCP 能力合并入 Native Host |
+| `mcp-wrapper/` | 已删除 — MCP 能力合并入 Native Host |
+| `daemon/` | 已清空（仅残留 `node_modules`）— 路由逻辑合并入 Native Host |
 
 ---
 
@@ -321,12 +329,12 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 | **perf_stop** | `cdpPerformanceStop(tabId)` | 停止性能追踪，返回指标（JSHeapUsedSize 等） |
 | **cdp_detach** | `cdpDetach(tabId)` | 清理监听器并分离调试器 |
 
-### 4.3 JSON-RPC 传输层（Service Worker）
+### 4.3 传输层（Service Worker）
 
-`JsonRpcTransport` 封装 WebSocket 完整生命周期：
+`JsonRpcTransport` 封装 WebSocket 完整生命周期，`NativeTransport` 管理 NM 生命周期（v0.2.1 新增）：
 
 ```
-连接 → 注册 → 心跳保活 → 请求/响应路由 → 断开重连
+NM 拉起 Native Host → WebSocket 业务连接 → JSON-RPC 2.0 请求/响应路由 → 断开重连
 ```
 
 **保活三角**（防止 MV3 Service Worker 被回收）：
@@ -383,8 +391,9 @@ Logexus AI Browser 是一个 Chrome 扩展，将本地 Chrome 浏览器暴露为
 | **关闭标签页即停止** | `tabs.onRemoved` → 立即清理连接；所有操作绑定到活跃 Tab |
 | **操作审计** | 所有操作完整记录，`AuditEntry` 保存到 IndexedDB，支持导出 |
 | **不存储密码** | 零密码存储，完全依赖浏览器已有登录态 |
-| **Token 认证** | WebSocket Daemon 连接需 Token（默认 `lx_3696ac533d9ddfb81d5e50340f205317`，可通过 `LOGEXUS_TOKEN` 环境变量覆盖） |
+| **Token 认证** | WebSocket / MCP SSE 连接需 Token（默认 `lx_3696ac533d9ddfb81d5e50340f205317`，可通过 `LOGEXUS_TOKEN` 环境变量覆盖） |
 | **本地通信** | 所有通信限制在 `127.0.0.1`，不暴露到网络 |
+| **模式隔离** | NM 模式（`--nm`）与独立模式 stdin 行为分离，防止进程异常退出（v0.2.1） |
 
 ---
 
@@ -426,8 +435,9 @@ LogexusAIBrowser/
 ├── src/
 │   ├── manifest.json                     # Manifest V3
 │   ├── background/                       # Service Worker
-│   │   ├── index.ts                      # SW 入口：消息路由、授权、审计、标签页管理
+│   │   ├── index.ts                      # SW 入口：消息路由、授权、审计、标签页管理、NM 生命周期
 │   │   ├── JsonRpcTransport.ts           # JSON-RPC 2.0 WebSocket 传输层
+│   │   ├── NativeTransport.ts            # Native Messaging 生命周期管理（v0.2.1 新增）
 │   │   ├── CDPEngine.ts                  # Chrome 调试协议引擎
 │   │   └── MacroEngine.ts               # 操作录制与回放
 │   ├── content/                          # Content Script
@@ -454,12 +464,16 @@ LogexusAIBrowser/
 │       ├── types.ts                      # ToolAction, PageState, AgentRequest/Response, AuditEntry
 │       ├── messages.ts                   # 消息类型常量
 │       └── jsonrpc.ts                    # JSON-RPC 2.0 类型、错误码、编解码
-├── native-host/                           # 单进程网关 (v0.2.0)
-│   ├── host.js                           # HTTP+WS+MCP SSE Server + 路由
+├── native-host/                           # 单进程网关 (v0.2.1)
+│   ├── host.js                           # HTTP+WS+MCP SSE Server + NM 生命周期
+│   ├── host.bat                          # Windows NM 启动入口（--nm 模式）
+│   ├── host.sh                           # macOS NM 启动入口（v0.2.1 新增）
+│   ├── start-silent.vbs                  # VBS 静默启动（无命令行窗口）
 │   ├── package.json                      # @modelcontextprotocol/sdk + ws
 │   ├── file-offloader.js                 # 大体积数据文件卸载
-│   ├── install.bat                       # Windows Native Messaging 注册
-│   ├── host.bat                          # Chrome 拉起入口
+│   ├── install.bat / install.sh          # NM Host 注册（Windows / macOS）
+│   ├── install-autostart.bat             # Windows 开机自启注册（v0.2.1）
+│   ├── com.logexus.browser.host.json     # NM manifest（install 生成）
 │   └── tools/
 │       ├── tools-registry.js             # 13 可见 + 6 隐藏 Tool
 │       └── semantic/                     # 5 个语义 CDP Tool
@@ -478,12 +492,14 @@ LogexusAIBrowser/
 │   └── test-agent.html                   # 浏览器测试控制台
 ├── docs/
 │   ├── design.md                         # 本文档
+│   ├── auto-start-design.md              # v0.2.1 自动启动设计规范
 │   ├── test-cases.md                     # 测试用例
 │   ├── operations.md                     # 操作手册
-│   ├── integration-guide.md              # 集成指南
+│   ├── integration-guide.md              # 集成指南（已废弃 → integration-guide-v0.2.0.md）
+│   ├── integration-guide-v0.2.0.md       # v0.2.0 集成指南
 │   ├── release-checklist.md              # 发布清单
 │   ├── privacy.md                        # 隐私政策
-│   └── chrome_extension_design_and_roadmap.md
+│   └── chrome_extension_design_and_roadmap.md  # 早期设计（历史参考）
 ├── vite.config.ts
 ├── tsconfig.json
 ├── tailwind.config.js
@@ -495,11 +511,20 @@ LogexusAIBrowser/
 
 ## 九、当前版本状态
 
-**版本**: 0.2.0
+**版本**: 0.2.1
+
+### 已实现 (v0.2.1)
+
+- [x] **Windows 开机自启**（主方案：VBS 静默启动 → 注册表 Run Key）
+- [x] **Chrome NM 自动拉起**（备选方案：`chrome.runtime.connectNative` → `host.bat --nm`）
+- [x] **运行模式区分**（`--nm` 参数隔离 NM 模式与独立模式的 stdin 行为）
+- [x] **`__auth_approved` JSON-RPC 透传**（Logexus Tauri `browser.rs` 授权字段不丢失）
+- [x] **macOS 支持**（`host.sh` NM 入口 + `install.sh` 注册脚本）
+- [x] **NativeTransport 模块**（NM 生命周期与 WebSocket 数据通道分离）
 
 ### 已实现 (v0.2.0)
 
-- [x] **单进程 Native Host**（MCP SSE Server + Native Messaging 桥接，废弃 Daemon 和独立 MCP Wrapper）
+- [x] **单进程 Native Host**（MCP SSE Server + WebSocket + NM 桥接，废弃 Daemon 和独立 MCP Wrapper）
 - [x] **文件卸载机制**（大体积数据 >10KB 写入 %TEMP%/logexus/，TTL + 硬上限自动清理）
 - [x] **13 个 MCP Tool**（7 基础 + evaluate 兜底 + 5 语义 CDP）
 - [x] **工具降噪**（隐藏 network_start/stop 等 6 个冗余 CDP 裸工具）

@@ -58,13 +58,13 @@ npm run build
 **Windows PowerShell**:
 
 ```powershell
-Compress-Archive -Path "dist\*" -DestinationPath "logexus-ai-browser-v0.1.0.zip"
+Compress-Archive -Path "dist\*" -DestinationPath "logexus-ai-browser-v0.2.1.zip"
 ```
 
 **macOS / Linux**:
 
 ```bash
-cd dist && zip -r ../logexus-ai-browser-v0.1.0.zip * && cd ..
+cd dist && zip -r ../logexus-ai-browser-v0.2.1.zip * && cd ..
 ```
 
 ---
@@ -88,7 +88,7 @@ cd dist && zip -r ../logexus-ai-browser-v0.1.0.zip * && cd ..
 
 1. 点击工具栏的扩展图标 → 打开 Side Panel
 2. Side Panel 显示连接状态（绿色 = 已连接当前 Tab）
-3. 外部 AI Agent 通过 `chrome.runtime.sendMessage` 发送 `AGENT_REQUEST` 指令
+3. 外部 AI Agent 通过 WebSocket（JSON-RPC 2.0 / AGENT_REQUEST）或 MCP SSE 发送指令
 4. Side Panel 弹出授权确认 → 点击「允许」→ Agent 操作执行
 5. 审计日志实时滚动显示每步操作
 
@@ -120,12 +120,12 @@ cd dist && zip -r ../logexus-ai-browser-v0.1.0.zip * && cd ..
 
 ### 3.5 配置 Native Messaging（外部 Agent 接入）
 
-Native Messaging 允许外部程序（Node.js/Python/任何语言）通过标准 stdin/stdout 与 Chrome 扩展通信。
+Native Messaging 允许 Chrome 在需要时自动拉起 Native Host 进程，进行生命周期管理。
 
 #### Windows
 
 1. 在 `chrome://extensions` 找到 Logexus AI Browser，复制扩展 ID
-2. 以管理员身份运行注册脚本：
+2. 运行注册脚本：
 
 ```bat
 cd native-host
@@ -134,52 +134,77 @@ install.bat <你的扩展ID>
 
 3. 重启 Chrome
 
-脚本会自动完成：
-- 生成 `host.bat`（启动 Node.js Host）
+脚本自动完成：
+- 生成 `host.bat`（NM 启动入口，`node host.js --nm`）
 - 生成 `com.logexus.browser.host.json`（Host 清单）
 - 写入注册表 `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.logexus.browser.host`
+
+**v0.2.1 新增**：安装 Native Host 后还可配置开机自启：
+
+```bat
+cd native-host
+install-autostart.bat
+```
 
 #### macOS
 
 ```bash
-# 创建 host 清单
-CHROME_NATIVE_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
-mkdir -p "$CHROME_NATIVE_DIR"
-
-cat > "$CHROME_NATIVE_DIR/com.logexus.browser.host.json" << EOF
-{
-  "name": "com.logexus.browser.host",
-  "description": "Logexus AI Browser Native Host",
-  "path": "$PWD/native-host/host.js",
-  "type": "stdio",
-  "allowed_origins": ["chrome-extension://<EXTENSION_ID>/"]
-}
-EOF
+cd native-host
+chmod +x install.sh && ./install.sh <你的扩展ID>
 ```
+
+脚本自动完成：
+- 生成 `com.logexus.browser.host.json`
+- 写入 `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/`
+- 使用 `host.sh` 作为 NM 启动入口
 
 #### 验证
 
 Native Messaging 连接成功后，Service Worker Console 输出 `[SW] Native Messaging connected`。
 
-### 3.6 配置 MCP Server（Claude Code 接入）
+#### Native Host 独立启动（手动/调试）
 
 ```bash
-# 安装依赖
-cd mcp-wrapper && npm install
+# 直连模式（不含 --nm，stdin 关闭不会自动退出）
+node native-host/host.js
 
-# 配置 Claude Code MCP
-# 编辑 ~/.claude/claude_desktop_config.json：
+# NM 模式（含 --nm，stdin 关闭时自动退出）
+node native-host/host.js --nm
+```
+
+### 3.6 配置 MCP Server（Claude Code 接入）
+
+v0.2.0+ Native Host 直接内置 MCP SSE Server，无需独立的 MCP Wrapper 进程。
+
+#### 前提条件
+
+1. Native Host 依赖已安装：`cd native-host && npm install`
+2. Native Host 已启动：`node native-host/host.js`
+
+#### 配置 Claude Code
+
+编辑 `~/.claude/mcp.json`（或 VS Code 的 `.vscode/mcp.json`）：
+
+```json
 {
   "mcpServers": {
     "logexus": {
-      "command": "node",
-      "args": ["D:/CCWorkSpace/LogexusAIBrowser/mcp-wrapper/server.js"]
+      "url": "http://127.0.0.1:9527/sse"
     }
   }
 }
 ```
 
-配置后 Claude Code 即可直接调用 7 种浏览器工具：`observe`, `click`, `type`, `navigate`, `extract`, `scroll`, `screenshot`。
+> **注意**：v0.2.0+ 使用 SSE over HTTP 模式（`url` 字段），而非 stdio 模式（`command` 字段）。
+
+#### 可用工具（13 个）
+
+配置后 Claude Code 可直接调用：
+- **基础操作 (7)**：`observe`, `click`, `type`, `navigate`, `extract`, `scroll`, `screenshot`
+- **CDP 能力 (1)**：`evaluate`
+- **语义工具 (5)**：`extract_network_apis`, `get_auth_cookies`, `screenshot_fullpage`, `export_pdf`, `get_storage`
+
+详见 [integration-guide-v0.2.0.md](integration-guide-v0.2.0.md)。
 
 ### 3.7 调试方法
 
@@ -260,7 +285,7 @@ Google 审核通常 **1-3 个工作日**。审核通过后自动上架。
 
 ### 4.6 版本更新
 
-1. 修改 `manifest.json` 中的 `version` 字段（如 `0.1.0` → `0.2.0`）
+1. 修改 `manifest.json` 中的 `version` 字段（如 `0.2.0` → `0.2.1`）
 2. 重新 `npm run build`
 3. 重新打包 `.zip`
 4. 在 Developer Dashboard 中找到对应扩展 → **「更新包」** → 上传新 `.zip`
@@ -353,24 +378,27 @@ jobs:
 
 ### 6.1 通信方式
 
-外部 AI Agent 通过 Chrome Extension Messaging API 与扩展通信：
+外部 AI Agent 通过 Native Host 与扩展通信，支持以下三种协议：
+
+| 方式 | 协议 | 适用场景 |
+|:--|:--|:--|
+| WebSocket JSON-RPC 2.0 | `ws://127.0.0.1:9527?role=agent` | Logexus Tauri, Python 脚本 |
+| MCP SSE | `http://127.0.0.1:9527/sse` | Claude Code, LangGraph |
+| HTTP POST | `http://127.0.0.1:9527/api/agent` | curl 测试, 简单脚本 |
+
+也可以通过 Chrome Extension Messaging API 直接通信（不经过 Native Host）：
 
 ```typescript
-// 发送指令到扩展
 const EXTENSION_ID = 'your_extension_id_here';
-
 const response = await chrome.runtime.sendMessage(EXTENSION_ID, {
   type: 'AGENT_REQUEST',
   task_id: 'req_001',
   action: 'observe',
   payload: {}
 });
-
-// response 类型为 AgentResponse
-console.log(response.status);       // 'success' | 'error' | 'blocked'
-console.log(response.data.current_url);
-console.log(response.data.new_observation);
 ```
+
+> 详细对接指南见 [integration-guide-v0.2.0.md](integration-guide-v0.2.0.md)。
 
 ### 6.2 6 种工具操作说明
 

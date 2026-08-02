@@ -1,6 +1,11 @@
 # Logexus AI Browser — 集成指南
 
-> 如何将 Logexus AI Browser 集成到任意应用中作为「My Browser」连接器。
+> ⚠️ **已废弃 (Deprecated)** — 本文档描述的是 v0.1.x 架构（基于独立 Daemon 进程）。
+> 请使用新版本文档：**[integration-guide-v0.2.0.md](integration-guide-v0.2.0.md)**
+>
+> 主要变化：Daemon + MCP Wrapper → 单进程 Native Host（WebSocket + MCP SSE + HTTP 三合一）
+>
+> 本文档仅作为历史参考保留。
 
 ## 架构
 
