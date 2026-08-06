@@ -172,9 +172,9 @@ Logexus 的 LangGraph sidecar 通过 `tools/browser.py` → HTTP `:47800` → Ru
 
 这条链路在 v0.2.0 下**完全兼容**，因为 Rust 层的 `send_browser_action()` 已经直接对接了 WebSocket/JSON-RPC 2.0 路径。
 
-### 3.6 授权流程（LOGEXUS_SKIP_AUTH）
+### 3.6 授权流程
 
-**默认行为**：首次安装 `LOGEXUS_SKIP_AUTH = OFF`，非 observe 操作需授权确认。
+**默认行为**：每次会话强制授权，非 observe 操作需授权确认。（`LOGEXUS_SKIP_AUTH` 本地调试开关已移除。）
 
 **非阻塞授权**：Extension 不弹窗、不阻塞，直接返回 `auth_required` 给调用方。
 
@@ -218,17 +218,7 @@ pub(crate) async fn send_browser_action_with_auth(
 }
 ```
 
-**查询/切换授权状态**（通过 `chrome.runtime.sendMessage`）：
-
-```javascript
-// 查询
-chrome.runtime.sendMessage(EXTENSION_ID, {type: 'GET_SKIP_AUTH'}, resp => {
-    // resp.skipAuth: true → 已跳过, false → 需授权
-});
-
-// 永久关闭授权（开发调试用）
-chrome.runtime.sendMessage(EXTENSION_ID, {type: 'SET_SKIP_AUTH', payload: {skip: true}});
-```
+> ⚠️ **安全说明（v0.2.1）**：`GET_SKIP_AUTH` / `SET_SKIP_AUTH` 与 `LOGEXUS_SKIP_AUTH` 已移除。扩展同时移除了 `externally_connectable` 与 `onMessageExternal`——**网页不再允许通过 `chrome.runtime.sendMessage` 直接调用扩展**（任何网站可伪造 `__auth_approved` 绕过授权）。所有外部 Agent 必须通过本地 daemon（`ws://127.0.0.1:9527?role=agent`，JSON-RPC 2.0）接入，授权仍走 `__auth_approved` 透传机制。
 
 ### 3.7 使用 v0.2.0 新增的 5 个语义 Tool
 

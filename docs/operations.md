@@ -111,11 +111,11 @@ cd dist && zip -r ../logexus-ai-browser-v0.2.1.zip * && cd ..
 3. 将 `scripts/test-agent.ts` 中的 `CONSOLE_SCRIPT` 内容替换 `YOUR_EXTENSION_ID_HERE`
 4. 粘贴到 Console 执行
 
-**方式三：外部 Node.js 脚本（通过 CDP）**
+**方式三：外部 Node.js 脚本（通过本地 daemon）**
 
 ```typescript
-// 使用 chrome.debugger API 或 Puppeteer 连接已有 Chrome 实例
-// 通过 CDP Runtime.evaluate 调用 chrome.runtime.sendMessage
+// 通过 WebSocket 连接本地 daemon：ws://127.0.0.1:9527?role=agent
+// 发送 JSON-RPC 2.0 请求（协议见 src/shared/jsonrpc.ts，示例见 scripts/test-agent.ts）
 ```
 
 ### 3.5 配置 Native Messaging（外部 Agent 接入）
@@ -386,17 +386,7 @@ jobs:
 | MCP SSE | `http://127.0.0.1:9527/sse` | Claude Code, LangGraph |
 | HTTP POST | `http://127.0.0.1:9527/api/agent` | curl 测试, 简单脚本 |
 
-也可以通过 Chrome Extension Messaging API 直接通信（不经过 Native Host）：
-
-```typescript
-const EXTENSION_ID = 'your_extension_id_here';
-const response = await chrome.runtime.sendMessage(EXTENSION_ID, {
-  type: 'AGENT_REQUEST',
-  task_id: 'req_001',
-  action: 'observe',
-  payload: {}
-});
-```
+> ⚠️ **安全说明（v0.2.1）**：扩展已移除 `externally_connectable` 与 `onMessageExternal` 网页直连入口——**不允许网页通过 `chrome.runtime.sendMessage` 直接驱动扩展**（任何网站可伪造 `__auth_approved` 绕过授权，属严重安全漏洞）。所有外部 Agent 一律通过上表本地 daemon 通道接入（WebSocket JSON-RPC / MCP SSE / HTTP）。
 
 > 详细对接指南见 [integration-guide-v0.2.0.md](integration-guide-v0.2.0.md)。
 

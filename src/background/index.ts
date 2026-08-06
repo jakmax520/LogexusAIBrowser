@@ -102,11 +102,6 @@ function broadcast(type: string, payload: unknown): void {
   }
 }
 
-// ── 外部 Agent 入口 ──
-chrome.runtime.onMessageExternal.addListener((req: AgentRequest, _sender, sendResponse) => {
-  handleAgentRequest(req).then(sendResponse);
-  return true;
-});
 chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
   if (req.type === MSG_AGENT_REQUEST) {
     handleAgentRequest(req as AgentRequest).then(sendResponse);

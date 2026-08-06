@@ -73,7 +73,6 @@ native-host/
 | `HTTP_HOST` | host.js | `127.0.0.1` | 仅本地回环，不暴露到网络 |
 | `AUTH_TOKEN` | host.js / 环境变量 `LOGEXUS_TOKEN` | `lx_3696...` | WebSocket 鉴权 Token |
 | `BROWSER_SKIP_AUTH` | browser.rs | `true` | Tauri 侧是否跳过授权 |
-| `LOGEXUS_SKIP_AUTH` | chrome.storage.local | `false` (关闭) | 扩展侧是否跳过授权 |
 
 ---
 
@@ -270,7 +269,7 @@ curl -s http://127.0.0.1:9527/health
 
 1. **仅本地回环**：Native Host 绑定 `127.0.0.1`，不可从外部网络访问
 2. **Token 鉴权**：WebSocket 连接需携带 `?token=lx_...`，不匹配则 4001 拒绝
-3. **操作授权**：navigate/click/type 需 `__auth_approved: true` 或 `LOGEXUS_SKIP_AUTH=ON`
+3. **操作授权**：navigate/click/type 需 `__auth_approved: true`
 4. **操作白名单**：仅 6 种原子操作（click/type/scroll/navigate/extract/wait）可执行
 5. **无窗口运行**：VBS 后台启动不暴露命令行窗口，防止误关闭
 
