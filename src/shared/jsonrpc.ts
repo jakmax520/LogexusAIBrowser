@@ -41,6 +41,7 @@ export type JsonRpcMessage = JsonRpcRequest | JsonRpcSuccess | JsonRpcError;
 export const METHOD_BROWSER_GET_CONTEXT = 'browser.get_context';
 export const METHOD_BROWSER_NAVIGATE = 'browser.navigate';
 export const METHOD_BROWSER_RELOAD = 'browser.reload';
+export const METHOD_BROWSER_GET_COOKIES = 'browser.get_cookies';
 export const METHOD_ACTION_CLICK = 'action.click';
 export const METHOD_ACTION_INPUT = 'action.input';
 export const METHOD_ACTION_SCROLL = 'action.scroll';
@@ -74,6 +75,10 @@ export interface BrowserNavigateParams {
   newTab?: boolean;
 }
 
+export interface BrowserGetCookiesParams {
+  domain: string;
+}
+
 export interface SystemRegisterParams {
   sessionId: string;
   version: string;
@@ -88,6 +93,10 @@ export interface BrowserGetContextResult {
   title: string;
   elements: InteractiveElement[];
   screenshot?: string; // base64 JPEG
+}
+
+export interface BrowserGetCookiesResult {
+  cookies: string; // Netscape cookie 格式，仅在本地内存流转
 }
 
 export interface ActionResult {

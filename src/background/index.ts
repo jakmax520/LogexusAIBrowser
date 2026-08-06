@@ -14,6 +14,7 @@ import {
   METHOD_BROWSER_GET_CONTEXT,
   METHOD_BROWSER_NAVIGATE,
   METHOD_BROWSER_RELOAD,
+  METHOD_BROWSER_GET_COOKIES,
   METHOD_ACTION_CLICK,
   METHOD_ACTION_INPUT,
   METHOD_ACTION_SCROLL,
@@ -22,6 +23,7 @@ import {
 import type {
   BrowserGetContextParams,
   BrowserNavigateParams,
+  BrowserGetCookiesParams,
   ActionClickParams,
   ActionInputParams,
   ActionScrollParams,
@@ -48,29 +50,6 @@ let auditIdCounter = 0;
 let authRequired = true;
 let sessionAuthorized = false;
 const logexusGroupIds = new Map<number, number>(); // windowId → groupId
-
-// 从 chrome.storage 加载 LOGEXUS_SKIP_AUTH 开关
-// 加载 LOGEXUS_SKIP_AUTH — 默认关闭（authRequired=true，首次操作需授权）
-async function loadSkipAuth(): Promise<void> {
-  try {
-    const stored = await chrome.storage.local.get('logexus_skip_auth');
-    const skip = stored.logexus_skip_auth === true; // 明确设 true 才跳过
-    authRequired = !skip;
-    if (skip) {
-      sessionAuthorized = true;
-      console.log('[SW] LOGEXUS_SKIP_AUTH = ON — auth bypassed');
-    } else {
-      console.log('[SW] LOGEXUS_SKIP_AUTH = OFF — auth required');
-    }
-  } catch { /* storage 不可用 */ }
-}
-
-// 对外暴露：通过 chrome.runtime.onMessage 接收开关切换
-function setSkipAuth(skip: boolean): void {
-  authRequired = !skip;
-  chrome.storage.local.set({ logexus_skip_auth: skip });
-  console.log(`[SW] LOGEXUS_SKIP_AUTH = ${skip ? 'ON' : 'OFF'}`);
-}
 
 // ── sendMessage 工具函数 ──
 function sendToTab(tabId: number, msg: Record<string, unknown>): Promise<Record<string, unknown> | null> {
@@ -131,15 +110,6 @@ chrome.runtime.onMessageExternal.addListener((req: AgentRequest, _sender, sendRe
 chrome.runtime.onMessage.addListener((req, _sender, sendResponse) => {
   if (req.type === MSG_AGENT_REQUEST) {
     handleAgentRequest(req as AgentRequest).then(sendResponse);
-    return true;
-  }
-  if (req.type === 'SET_SKIP_AUTH') {
-    setSkipAuth(!!req.payload?.skip);
-    sendResponse({ success: true, skipAuth: !authRequired });
-    return true;
-  }
-  if (req.type === 'GET_SKIP_AUTH') {
-    sendResponse({ skipAuth: !authRequired });
     return true;
   }
   return false;
@@ -760,6 +730,10 @@ transport.onRequest(async (method, params) => {
     case METHOD_BROWSER_RELOAD: {
       return handleBrowserReload();
     }
+	case METHOD_BROWSER_GET_COOKIES: {
+	  const p = params as unknown as BrowserGetCookiesParams;
+	  return handleBrowserGetCookies(p);
+	}
     case METHOD_ACTION_CLICK: {
       const p = params as unknown as ActionClickParams;
       return handleActionClick(p);
@@ -799,7 +773,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 });
 
 // ── 启动 ──
-console.log('[SW] Starting Logexus AI Browser v0.2.0...');
+console.log('[SW] Starting Logexus AI Browser v0.2.1...');
 
 // ── 传输层初始化 ──
 // 架构：NM 管进程生死，WebSocket 管海量数据，因 NM 单条消息有 1MB 硬限制
@@ -828,8 +802,32 @@ function initTransport(): void {
   transport.connect();
 }
 
-// 首次启动默认跳过授权（LOGEXUS_SKIP_AUTH = ON），用户可通过 Side Panel 或消息关闭
-loadSkipAuth();
+function formatToNetscape(cookies: chrome.cookies.Cookie[], _domain: string): string {
+  let output = "# Netscape HTTP Cookie File\n";
+  output += "# http://curl.haxx.se/rfc/cookie_spec.html\n";
+  output += "# This is a generated file! Do not edit.\n\n";
+  for (const cookie of cookies) {
+    const domainStr = cookie.domain;
+    const includeSubDomain = domainStr.startsWith('.') ? "TRUE" : "FALSE";
+    const path = cookie.path || "/";
+    const secure = cookie.secure ? "TRUE" : "FALSE";
+    const expiration = cookie.session ? 0 : Math.floor(cookie.expirationDate || 0);
+    output += `${domainStr}\t${includeSubDomain}\t${path}\t${secure}\t${expiration}\t${cookie.name}\t${cookie.value}\n`;
+  }
+  return output;
+}
+
+async function handleBrowserGetCookies(params: BrowserGetCookiesParams): Promise<string> {
+  return new Promise((resolve, reject) => {
+    chrome.cookies.getAll({ domain: params.domain }, (cookies) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(formatToNetscape(cookies, params.domain));
+    });
+  });
+}
 
 initTransport();
 activateCurrentTab();
