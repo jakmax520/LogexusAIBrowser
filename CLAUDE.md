@@ -25,42 +25,40 @@ Logexus AI Browser 是一个 Chrome 扩展，让 AI 像真人一样操作本地�
 
 ```
 LogexusAIBrowser/
+├── manifest.json                  # Manifest V3 配置（项目根目录）
 ├── src/
-│   ├── manifest.json                  # Manifest V3 配置
-│   ├── background/                    # Service Worker
-│   │   ├── index.ts                   # SW 入口，消息路由
-│   │   ├── AgentScheduler.ts          # 核心调度器 (ReAct 循环)
-│   │   ├── LLMProvider.ts             # LLM 调用抽象层
-│   │   └── state-machine.ts           # 任务状态机
-│   ├── content/                       # Content Script
-│   │   ├── index.ts                   # CS 入口，消息监听
-│   │   ├── DOMReducer.ts              # DOM 降噪过滤
-│   │   ├── ElementIndexer.ts          # 交互元素索引注入
-│   │   ├── ActionExecutor.ts          # 6 种原子操作执行器
-│   │   └── MutationWatcher.ts         # DOM 变化监听 + 静默期判定
-│   ├── sidepanel/                     # Side Panel UI (React)
-│   │   ├── index.html
-│   │   ├── main.tsx
-│   │   ├── App.tsx
-│   │   ├── components/
-│   │   ├── hooks/
-│   │   └── styles/
-│   ├── shared/                        # 共享类型与常量
-│   │   ├── types.ts
-│   │   ├── messages.ts
-│   │   └── prompt.ts
-│   └── providers/                     # LLM Provider 实现
-│       ├── base.ts
-│       ├── openai-compatible.ts
-│       ├── anthropic.ts
-│       └── ollama.ts
-├── docs/
-│   └── design.md                      # 完整产品设计方案
+│   ├── background/                # Service Worker
+│   │   ├── index.ts               # SW 入口：消息路由 / JSON-RPC 处理 / 授权 / 导航
+│   │   ├── JsonRpcTransport.ts    # 本地 daemon WebSocket 连接 (ws://127.0.0.1:9527)
+│   │   ├── CDPEngine.ts           # chrome.debugger (CDP) 封装
+│   │   └── MacroEngine.ts         # 宏录制/回放
+│   ├── content/                   # Content Script
+│   │   ├── index.ts               # CS 入口，消息监听
+│   │   ├── DOMReducer.ts          # DOM 降噪过滤
+│   │   ├── ElementIndexer.ts      # 交互元素索引注入
+│   │   ├── ActionExecutor.ts      # 6 种原子操作执行器
+│   │   └── MutationWatcher.ts     # DOM 变化监听 + 静默期判定
+│   ├── sidepanel/                 # Side Panel UI (React)
+│   │   ├── index.html / main.tsx / App.tsx
+│   │   ├── components/            # AuditLog / AuthDialog / StatusIndicator / TemplatePanel
+│   │   └── hooks/                 # useAgentState / logStorage
+│   └── shared/                    # 共享类型与常量
+│       ├── types.ts
+│       ├── messages.ts
+│       └── jsonrpc.ts             # JSON-RPC 2.0 协议定义
+├── native-host/                   # 本地 daemon (host.js：WebSocket :9527 + Native Messaging)
+├── docs/                          # 上架/运营文档
+│   ├── operations.md              # 打包/部署/外部 Agent 对接指南
+│   ├── integration-guide-v0.2.0.md
+│   ├── auto-start-design.md
+│   └── privacy-policy.html        # 隐私权政策（GitHub Pages 托管）
+├── dev-docs/                      # 内部设计文档（gitignored，不入库）
+│   └── design/                    # design.md / test-cases.md / release-checklist.md 等
+├── store-assets/                  # 商店上架素材（推广图 / 横幅）
 ├── vite.config.ts
 ├── tsconfig.json
 ├── package.json
-├── tailwind.config.js
-├── DESIGN.md                          # UI 设计系统
+├── DESIGN.md                      # UI 设计系统
 ├── SECURITY.md
 ├── CONTRIBUTING.md
 └── CODE_OF_CONDUCT.md
@@ -71,21 +69,33 @@ LogexusAIBrowser/
 ### 数据流
 
 ```
-Side Panel (UI) ←→ Service Worker (调度) ←→ Content Script (执行)
-                         ↓
-                    LLM API (AI 引擎)
+外部 AI Agent (Claude Code / Cursor / 自研)
+        ↓  JSON-RPC 2.0 (WebSocket ws://127.0.0.1:9527?role=agent)
+本地 daemon (native-host/host.js)
+        ↓  扩展内部消息
+Service Worker (路由 / 授权 / 执行)
+        ↓
+Content Script (DOM 采集与原子操作) / CDPEngine (chrome.debugger)
 ```
 
-### Agent 循环 (ReAct)
+外部 Agent 的思考与规划发生在**扩展外部**；扩展只提供受控的浏览器原子操作能力，通过本地 daemon 暴露 JSON-RPC 接口（协议见 `src/shared/jsonrpc.ts`）。
 
-```
-Observe → Plan → Act → Evaluate → (循环)
-```
+### 原子操作
 
-1. **Observe**: Content Script 采集页面 DOM 结构 (降噪后 ≤80 个交互元素)
-2. **Plan**: Service Worker 组装 Prompt → SSE 流式调用 LLM → 解析 Tool Call
-3. **Act**: 校验 action 合法性 → 注入 Content Script 执行 → 等待 MutationObserver 静默
-4. **Evaluate**: Reflector 对比执行前后状态 → 决定继续/重试/人工介入/完成
+扩展支持 6 种原子操作，全部经本地校验后执行：
+
+| JSON-RPC method | 说明 |
+|:--|:--|
+| `browser.get_context` | 采集当前页 DOM（降噪后交互元素，可选截图） |
+| `browser.navigate` / `browser.reload` | 导航 / 刷新 |
+| `action.click` | 点击元素 |
+| `action.input` | 输入文本 |
+| `action.scroll` | 滚动 |
+
+### 授权流程
+
+- **会话强制授权**：非观察类操作首次返回 `auth_required`，调用方经用户确认后携带 `__auth_approved: true` 重试（由本地 daemon 原样透传）
+- 每次会话独立；标签页导航/关闭即重置 `sessionAuthorized`
 
 ### 状态机
 
@@ -98,8 +108,9 @@ IDLE → RUNNING → PAUSED → WAITING_USER → COMPLETED
 ### 安全约束
 
 - **禁止任意代码执行**: 仅支持 6 种预定义原子操作 (click/type/scroll/navigate/extract/wait)
+- **仅本地接入**: 已移除 `externally_connectable` 与 `onMessageExternal`——网页无法通过 `chrome.runtime.sendMessage` 驱动扩展；外部 Agent 只能经本地 daemon (WebSocket) 接入
 - **API Key 本地存储**: chrome.storage.local 加密存储
-- **每次会话强制授权**: 对标 Manus，需用户点击确认
+- **每次会话强制授权**: 需用户确认，`__auth_approved` 仅由本地 daemon 透传
 - **关闭标签页即停止**: 对标 Manus 的即时终止设计
 
 ## 5. 常用命令
@@ -161,7 +172,7 @@ npm run typecheck
 
 ## 7. 编码约定
 
-- 修改前先读 `docs/design.md` 了解设计方案全貌
+- 修改前先读 `dev-docs/design/design.md` 了解设计方案全貌
 - 安全相关修改需对照 `SECURITY.md` 检查
 - 新增动作类型需在 `shared/types.ts` 枚举 + `ActionExecutor.ts` 实现 + `prompt.ts` 更新
 - 修改后立即 `npm run typecheck` 验证，不攒到最后
@@ -178,8 +189,8 @@ npm run typecheck
 
 | 决策 | 结论 | 原因 |
 |:--|:--|:--|
-| Agent 框架 | 纯 TS 自研 | 避免 Python WebSocket 桥接，原生 Chrome API |
+| Agent 架构 | 扩展=浏览器操作引擎，AI 思考在扩展外 | 外部 Agent（Claude Code/Cursor/自研）经本地 daemon JSON-RPC 驱动，解耦 |
 | 截图策略 | 混合模式 | 日常 DOM 树省 Token，失败时截图给视觉模型 |
-| LLM Provider | 多 Provider | 首发 OpenAI 兼容接口，预留 Ollama 本地通道 |
+| LLM 接入 | 由外部 Agent 自行决定 | 扩展不内置 LLM Provider，仅暴露原子操作 |
 | UI 风格 | 富交互面板 | 消除黑盒效应，状态透明可追踪 |
-| 远程触发 | 第四阶段后 | MVP 聚焦核心闭环 |
+| 远程触发 | 本地 daemon JSON-RPC | 外部 Agent 经 WebSocket (:9527) 驱动，仅本地回环 + Token 鉴权 |
