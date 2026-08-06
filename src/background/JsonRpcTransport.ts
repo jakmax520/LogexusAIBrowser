@@ -173,7 +173,7 @@ export class JsonRpcTransport {
       };
 
       this.ws.onclose = () => {
-        console.log('[SW] JSON-RPC transport closed');
+        console.debug('[SW] JSON-RPC transport closed');
         this.connecting = false;
         this.cleanup();
         this.onConnectionChange?.(false);
@@ -182,7 +182,8 @@ export class JsonRpcTransport {
 
       this.ws.onerror = () => {
         // onerror 后通常紧跟着 onclose，不要在 onerror 里重置 connecting
-        console.warn('[SW] JSON-RPC transport: daemon unreachable, will retry...');
+        // daemon 未启动时属预期状态，用 debug 避免刷屏
+        console.debug('[SW] JSON-RPC transport: daemon unreachable, will retry...');
       };
     } catch {
       this.connecting = false;
@@ -348,7 +349,7 @@ export class JsonRpcTransport {
       RECONNECT_CAP_MS
     );
     this.backoff++;
-    console.log(`[SW] JSON-RPC reconnect in ${delay}ms (attempt ${this.backoff})`);
+    console.debug(`[SW] JSON-RPC reconnect in ${delay}ms (attempt ${this.backoff})`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();

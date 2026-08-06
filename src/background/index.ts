@@ -619,6 +619,11 @@ function emitAudit(req: AgentRequest, status: 'success' | 'error' | 'blocked', r
 // ── JSON-RPC 传输层 ──
 const transport = new JsonRpcTransport();
 
+// daemon 连接状态 → 侧边栏（daemon 未启动时安静显示 Connecting...，连上后 API Gateway Ready）
+transport.setConnectionChangeCallback((connected) => {
+  broadcast(MSG_CONNECTION_STATUS, { connected, tabCount: connectedTabs.size, currentTabId });
+});
+
 // 旧协议 AgentRequest → 直达 handleAgentRequest（避免 JSON-RPC method 映射丢失 navigate/extract 等 action）
 transport.setAgentRequestHandler((req) =>
   handleAgentRequest(req as unknown as AgentRequest).then(r => r as unknown as Record<string, unknown>)
