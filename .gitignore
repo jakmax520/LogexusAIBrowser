@@ -45,6 +45,7 @@ daemon/.omc/
 
 # Package
 *.tgz
+*.zip
 
 dev-docs/
 .claude/
