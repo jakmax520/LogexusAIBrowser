@@ -1,2 +1,6 @@
 node_modules/
 *.log
+
+# 机器相关生成文件（install.bat / install.sh 会按本机路径重新生成）
+com.logexus.browser.host.json
+host.bat
