@@ -139,11 +139,17 @@ install.bat <你的扩展ID>
 - 生成 `com.logexus.browser.host.json`（Host 清单）
 - 写入注册表 `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.logexus.browser.host`
 
-**v0.2.1 新增**：安装 Native Host 后还可配置开机自启：
+**v0.2.1 新增**：安装 Native Host 后还可配置**开机自启**（用户登录时静默启动 daemon，不依赖 Chrome）：
 
 ```bat
 cd native-host
 install-autostart.bat
+```
+
+脚本注册 `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\LogexusNativeHost` → `start-silent.vbs`（无窗口运行 `node host.js`）。等效手动命令：
+
+```powershell
+Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "LogexusNativeHost" -Value "D:\<你的路径>\native-host\start-silent.vbs"
 ```
 
 #### macOS
@@ -171,6 +177,23 @@ node native-host/host.js
 # NM 模式（含 --nm，stdin 关闭时自动退出）
 node native-host/host.js --nm
 ```
+
+#### 常见故障：ERR_CONNECTION_REFUSED / daemon 未启动
+
+**症状**：扩展侧边栏一直显示 `Connecting...`，Console 报 `ws://127.0.0.1:9527 ... ERR_CONNECTION_REFUSED`。
+
+**原因排查**（按概率）：
+1. **清单路径指向错误平台**：`com.logexus.browser.host.json` 的 `path` 可能是 macOS 路径（如 `/Volumes/.../host.sh`，由 `install.sh` 生成），Windows 上 Chrome 找不到启动入口。修复：重跑 `install.bat <扩展ID>` 用本机路径重新生成。
+2. **扩展 ID 不匹配**：解压扩展的 ID 由加载路径派生，跨机器/跨目录会变。清单 `allowed_origins` 里的 ID 必须等于 `chrome://extensions` 里看到的 ID。修复：用正确 ID 重跑 `install.bat`。
+3. **Chrome 未彻底重启**：改完清单需**完全退出** Chrome（任务管理器结束所有 chrome.exe，含后台进程）再重开，否则 NM 注册缓存不刷新。
+
+**验证**：`netstat -ano | findstr 9527` 看到 `LISTENING`，且 daemon 日志出现 `Extension connected via WebSocket`。
+
+#### 连接行为（v0.2.1+）
+
+- **daemon 未运行时**：扩展静默等待——侧边栏显示 `Connecting...`，不弹错误；传输层失败重连日志为 `debug` 级（生产构建已剥离 `console.*`）。浏览器对 WebSocket 连接失败自动打印的 `ERR_CONNECTION_REFUSED` 属正常现象，无法屏蔽。
+- **daemon 启动后**：扩展通过指数退避（1s→30s）+ 15s 保活闹钟自动重连，**≤15s 内自动连上**，侧边栏变为 `API Gateway Ready`，无需用户操作。
+- **Logexus 调用 MyBrowser**：host.js 要求扩展已通过 WebSocket 连接（`extensionWs` 存在）才能转发调用，故扩展需保持常连；静默等待 + 自动连上即为此设计。
 
 ### 3.6 配置 MCP Server（Claude Code 接入）
 
