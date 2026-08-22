@@ -1,12 +1,20 @@
 {
   "manifest_version": 3,
   "name": "Logexus AI Browser",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "AI-powered browser operator. Turn your Chrome into a secure automation engine for Claude Code, Cursor, and custom AI agents.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Logexus AI Browser",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "permissions": [
     "tabs",

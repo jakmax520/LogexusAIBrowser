@@ -51,6 +51,38 @@ let authRequired = true;
 let sessionAuthorized = false;
 const logexusGroupIds = new Map<number, number>(); // windowId → groupId
 
+// ── currentTabId 持久化（MV3 Service Worker 空闲会被回收，内存变量会丢 → 每次新开 tab）──
+const TAB_ID_KEY = 'lx_current_tab_id';
+
+async function persistCurrentTabId(): Promise<void> {
+  try {
+    await chrome.storage.session.set({ [TAB_ID_KEY]: currentTabId });
+  } catch {
+    /* storage 不可用时忽略，仅失去重启记忆 */
+  }
+}
+
+async function restoreCurrentTabId(): Promise<void> {
+  try {
+    const { [TAB_ID_KEY]: saved } = await chrome.storage.session.get(TAB_ID_KEY);
+    if (typeof saved === 'number') {
+      currentTabId = saved;
+    }
+  } catch {
+    /* 读取失败则保持 null，走新建分支 */
+  }
+}
+
+/** 校验缓存的 tabId 是否仍存在（未被用户关闭） */
+async function currentTabStillExists(tabId: number): Promise<boolean> {
+  try {
+    await chrome.tabs.get(tabId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── sendMessage 工具函数 ──
 function sendToTab(tabId: number, msg: Record<string, unknown>): Promise<Record<string, unknown> | null> {
   return new Promise((resolve) => {
@@ -78,6 +110,8 @@ async function activateCurrentTab(): Promise<void> {
       broadcast(MSG_CONNECTION_STATUS, {
         connected: true, tabCount: connectedTabs.size, currentTabId: tab.id, url: tab.url,
       });
+      // 持久化当前 tab，供 SW 回收后复用
+      persistCurrentTabId();
       return;
     }
     await new Promise((r) => setTimeout(r, 500));
@@ -182,6 +216,15 @@ async function handleNavigate(req: AgentRequest): Promise<AgentResponse> {
   }
 
   try {
+    // 恢复持久化的 tabId：MV3 SW 空闲会被回收，内存 currentTabId 丢失（→ 每次新开 tab）
+    // 若恢复的 tab 仍存在则复用（tabs.update），否则才新建（tabs.create）
+    if (!currentTabId) {
+      await restoreCurrentTabId();
+    }
+    if (currentTabId && !(await currentTabStillExists(currentTabId))) {
+      console.log('[SW] cached tabId gone, will create new tab');
+      currentTabId = null;
+    }
     console.log('[SW] handleNavigate:', url, 'currentTabId:', currentTabId);
     let tab: chrome.tabs.Tab;
     if (currentTabId) {
@@ -190,6 +233,7 @@ async function handleNavigate(req: AgentRequest): Promise<AgentResponse> {
       tab = await chrome.tabs.create({ url, active: true });
     }
     currentTabId = tab.id!;
+    await persistCurrentTabId();
     console.log('[SW] navigate OK — tab:', tab.id);
 
     // 归入 My Logexus Browser 分组
@@ -701,9 +745,18 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
     if (resp?.type === MSG_PONG) { connectedTabs.add(tabId); break; }
     await new Promise((r) => setTimeout(r, 500));
   }
+  // 用户切到某 tab 视为当前工作 tab，持久化供 SW 回收后复用
+  await persistCurrentTabId();
   broadcast(MSG_CONNECTION_STATUS, { connected: true, tabCount: connectedTabs.size, currentTabId });
 });
-chrome.tabs.onRemoved.addListener((tabId) => { connectedTabs.delete(tabId); if (currentTabId === tabId) currentTabId = null; });
+chrome.tabs.onRemoved.addListener(async (tabId) => {
+  connectedTabs.delete(tabId);
+  if (currentTabId === tabId) {
+    currentTabId = null;
+    // 同步清持久化，避免缓存已关闭的 tab
+    try { await chrome.storage.session.remove(TAB_ID_KEY); } catch { /* ignore */ }
+  }
+});
 chrome.tabs.onUpdated.addListener(async (tabId, info) => {
   if (info.status === 'complete') {
     connectedTabs.delete(tabId);
